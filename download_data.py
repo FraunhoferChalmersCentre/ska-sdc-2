@@ -5,7 +5,7 @@ import gdown
 from dataprep import filename
 from definitions import config, ROOT_DIR
 
-types = ['dev_s', 'dev_l' 'eval']
+types = ['dev_s', 'dev_l', 'eval']
 parser = argparse.ArgumentParser()
 parser.add_argument('--type', metavar='T', nargs='*', default=types,  help='types to download (dev_s/dev_l/eval)')
 
