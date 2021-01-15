@@ -16,7 +16,7 @@ sizes = df[key].copy().values
 sizes.sort()
 
 # source_index = df[df[key] == sizes[-10]].index[0]
-source_index = np.random.choice(df[df['line_flux_integral'] > sizes[int(.9 * len(sizes))]].index)
+source_index = np.random.choice(df[df['line_flux_integral'] > sizes[int(.95 * len(sizes))]].index)
 freq = df.iloc[source_index]['central_freq']
 
 d = positions[source_index].flatten()
@@ -35,10 +35,10 @@ bw = rest_freq * lw / c
 upper_freq = r.central_freq - bw / 2
 lower_freq = r.central_freq + bw / 2
 
-start_band = wcs.all_world2pix([[r['ra'], r['dec'], upper_freq]], 0).astype(np.int)[0, -1]
-end_band = wcs.all_world2pix([[r['ra'], r['dec'], lower_freq]], 0).astype(np.int)[0, -1]
+start_band = max(0, wcs.all_world2pix([[r['ra'], r['dec'], upper_freq]], 0).astype(np.int)[0, -1])
+end_band = min(len(cropped), wcs.all_world2pix([[r['ra'], r['dec'], lower_freq]], 0).astype(np.int)[0, -1])
 
-averaging_width = 20
+averaging_width = 10
 n_plots = 2 + np.ceil((end_band - start_band) / averaging_width).astype(int)
 fig, axes = plt.subplots(1, n_plots, sharex=True, sharey=True)
 
@@ -51,7 +51,7 @@ for i, ax in enumerate(axes):
 plt.show()
 
 plt.figure()
-span_center = 200
+span_center = 50
 start = max(0, band - span_center)
 end = min(len(cropped), band + span_center)
 spectrum = cropped[start:end, padding_w, padding_h]
