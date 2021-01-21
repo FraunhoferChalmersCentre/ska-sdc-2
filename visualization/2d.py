@@ -11,12 +11,11 @@ wcs = WCS(header)
 
 positions = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0).astype(np.int)
 
-key = 'line_flux_integral'
-sizes = df[key].copy().values
-sizes.sort()
+sizes = df['line_flux_integral'].copy() / df['w20']
+sorted_sizes = sizes.sort_values(ascending=False)
 
-# source_index = df[df[key] == sizes[-10]].index[0]
-source_index = np.random.choice(df[df['line_flux_integral'] > sizes[int(0 * len(sizes))]].index)
+index_pos = np.random.choice(np.arange(int(.5 * len(sizes))))
+source_index = sorted_sizes.index[index_pos]
 freq = df.iloc[source_index]['central_freq']
 
 d = positions[source_index].flatten()
@@ -42,28 +41,31 @@ end = min(len(hi_data), band + span_center)
 
 bands = hi_data[start: end]
 cropped = bands[:, d[1] - padding_w:d[1] + padding_w, d[0] - padding_h:d[0] + padding_h]
-a = 1e3
+
+n_plots = 10
+start = int(len(cropped) / 2 - n_plots / 2)
+fig, axes = plt.subplots(2, n_plots + 1, sharex=True, sharey=True)
+
+vmin = cropped[start:start+n_plots].min()
+vmax = cropped[start:start+n_plots].max()
+
+for i, ax in enumerate(axes[0, :-1]):
+    ax.imshow(cropped[start + i], cmap='gray', vmin=vmin, vmax=vmax)
+
+axes[0, -1].imshow(cropped[start:start+n_plots].sum(axis=0), cmap='gray')
+
+a = 1e6
 for i, b in enumerate(bands):
-    cropped[i] = (cropped[i] - b.min()) / (b.max() - b.min())
+    robust_b = b.copy()
+    upper_perc = np.percentile(robust_b, 99)
+    robust_b = cropped[i]#np.where(robust_b > upper_perc, upper_perc, robust_b)
+    cropped[i] = (cropped[i] - robust_b.min()) / (robust_b.max() - robust_b.min())
     cropped[i] = (np.power(a, cropped[i]) - 1) / a
 
-averaging_width = 10
-n_plots = np.ceil((end - start) / averaging_width).astype(int)
-fig, axes = plt.subplots(1, n_plots, sharex=True, sharey=True)
+vmin = cropped[start:start+n_plots].min()
+vmax = cropped[start:start+n_plots].max()
 
-for i, ax in enumerate(axes):
-    k = averaging_width * i
+for i, ax in enumerate(axes[1, :-1]):
+    ax.imshow(cropped[start + i], cmap='gray', vmin=vmin, vmax=vmax)
 
-    partition = cropped[k: k + averaging_width, :, :]
-    channel = np.mean(partition, axis=0)
-    ax.imshow(channel, cmap='gray')
-    ax.set_title('{}, {}'.format(k, k + averaging_width))
-
-plt.show()
-plt.figure()
-
-spectrum = cropped[:, padding_w, padding_h]
-plt.plot(np.arange(start, end), spectrum)
-plt.vlines(band, spectrum.min(), spectrum.max(), color='r')
-plt.vlines([start_band, end_band], spectrum.min(), spectrum.max(), color='g')
-plt.show()
+axes[1, -1].imshow(cropped[start:start+n_plots].sum(axis=0), cmap='gray')
