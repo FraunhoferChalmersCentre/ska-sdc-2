@@ -14,7 +14,7 @@ positions = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0).astype(np.in
 sizes = df['line_flux_integral'].copy()
 sorted_sizes = sizes.sort_values(ascending=True)
 
-min_size = .9
+min_size = .99
 max_size = 1.
 index_pos = np.random.randint(int(min_size * len(sizes)), int(max_size * len(sizes)))
 print(index_pos / len(sorted_sizes))
