@@ -1,4 +1,10 @@
-# Ensure large files (at least 37 GB) can be stored in these paths
+# Ensure very large files can be stored in these paths
 # dot (.) means project directory
 path:
   data: ./data/
+  processed: ./processed/
+
+preprocessing:
+  min_axis_pixels: 0.5
+
+

@@ -1,11 +1,16 @@
+from typing import Any
+
 import numpy as np
+import pandas as pd
+from astropy.wcs import WCS
+import sparse
 
 
-def create_data_set(df, hi_data, wcs, prob_galaxy, side_length, precuation, freq_band, spatial_points,
-                    freq_points_f=None, seed=None):
+def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: sparse.COO, wcs: WCS, prob_galaxy: float,
+                         side_length: int, precuation: int, freq_band: float, spatial_points: int,
+                         freq_points_f: Any=None, seed=None):
     data = dict()
     positions = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0).astype(np.int)
-    sourcemap = create_sourcemap(positions, hi_data.shape)
     positions = positions[:, :2]
     lower_freq, upper_freq = freq_boundary(df['central_freq'].values, df['w20'].values)
     upper_band = wcs.all_world2pix(
@@ -29,7 +34,7 @@ def create_data_set(df, hi_data, wcs, prob_galaxy, side_length, precuation, freq
     n_points = n_sources + n_empty
 
     data['image'] = np.zeros((n_points, freq_band, side_length, side_length))
-    data['sourcemap'] = np.zeros((n_points, side_length, side_length), dtype=np.int)
+    data['segmentmap'] = np.zeros((n_points, side_length, side_length), dtype=np.int)
     data['position'] = np.zeros((n_points, 3, 2), dtype=np.int)
     data['class'] = np.array([1 if i < n_sources else 0 for i in range(n_points)])
     data['cluster'] = np.zeros(n_points, dtype=np.int)
@@ -50,7 +55,7 @@ def create_data_set(df, hi_data, wcs, prob_galaxy, side_length, precuation, freq
         for j in range(spatial_points):
             for k in range(freq_points_f[part_size[i]]):
                 data['image'][counter] = hi_data[freq[k, 0]:freq[k, 1], x[j, 0]:x[j, 1], y[j, 0]:y[j, 1]]
-                data['sourcemap'][counter] = np.sum(sourcemap[freq[k, 0]:freq[k, 1], x[j, 0]:x[j, 1], y[j, 0]:y[j, 1]],
+                data['segmentmap'][counter] = np.sum(segmentmap[freq[k, 0]:freq[k, 1], x[j, 0]:x[j, 1], y[j, 0]:y[j, 1]],
                                                     axis=0)
                 data['position'][counter] = np.array([freq[k], x[j], y[j]])
                 data['cluster'][counter] = cluster
@@ -66,7 +71,7 @@ def create_data_set(df, hi_data, wcs, prob_galaxy, side_length, precuation, freq
         freq = inside_box([freq], [0], [hi_data.shape[0]])[0]
         x, y = random_center_box(np.array([[0.5, 0.5]]), side_length, coordinate[1:], 0, [0, 0],
                                  [hi_data.shape[1], hi_data.shape[2]])
-        sum_map = np.sum(sourcemap[np.min(freq):np.max(freq), x[0, 0]:x[0, 1], y[0, 0]:y[0, 1]])
+        sum_map = np.sum(segmentmap[np.min(freq):np.max(freq), x[0, 0]:x[0, 1], y[0, 0]:y[0, 1]])
         if sum_map == 0:
             for i in range(freq_empty):
                 data['image'][counter] = hi_data[freq[i, 0]:freq[i, 1], x[0, 0]:x[0, 1], y[0, 0]:y[0, 1]]
@@ -75,13 +80,6 @@ def create_data_set(df, hi_data, wcs, prob_galaxy, side_length, precuation, freq
                 counter += 1
             cluster += 1
     return data
-
-
-def create_sourcemap(positions, dimensions):
-    sourcemap = np.zeros(dimensions, dtype=np.int)
-    for pos in positions:
-        sourcemap[pos[2], pos[0], pos[1]] = 1
-    return sourcemap
 
 
 class Randomizer:
@@ -159,6 +157,6 @@ def random_in_interval(rdn, interval, length):
     dim = rdn.shape[1]
     coord = [np.zeros((n_points, 2), dtype=np.int) for _ in range(dim)]
     for i in range(dim):
-        coord[i][:, 0] = rdn[:, i] * max((interval[i, 1] - interval[i, 0] - length), 0) + interval[i, 0] + length/2
+        coord[i][:, 0] = rdn[:, i] * max((interval[i, 1] - interval[i, 0] - length), 0) + interval[i, 0] + length / 2
         coord[i][:, 1] = coord[i][:, 0] + length
     return coord

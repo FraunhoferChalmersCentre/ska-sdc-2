@@ -2,7 +2,7 @@ import os
 import argparse
 
 import gdown
-from dataprep import filename
+from utils import filename
 from definitions import config, ROOT_DIR
 
 types = ['dev_s', 'dev_l', 'eval']
@@ -34,15 +34,15 @@ readme_urls = {'dev_s': 'https://drive.google.com/uc?id=11Bu0g99Jf3Qfz_tEQv7D8ta
 for t in args.type:
     if t != 'eval':
         print('Downloading truth catalogue for {}'.format(t))
-        gdown.download(truth_cat_urls[t], filename.true_data(t), quiet=True)
+        gdown.download(truth_cat_urls[t], filename.data.true(t), quiet=True)
 
     print('Downloading sky fits for {}'.format(t))
-    gdown.download(sky_urls[t], filename.sky_data(t), quiet=True)
+    gdown.download(sky_urls[t], filename.data.sky(t), quiet=True)
 
     print('Downloading radio continuum counterpart fits for {}'.format(t))
-    gdown.download(cont_urls[t], filename.cont_data(t), quiet=True)
+    gdown.download(cont_urls[t], filename.data.cont(t), quiet=True)
 
     print('Downloading README file for {}'.format(t))
-    gdown.download(readme_urls[t], filename.readme(t), quiet=True)
+    gdown.download(readme_urls[t], filename.data.readme(t), quiet=True)
 
 print('Finished downloading')
