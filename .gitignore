@@ -143,5 +143,10 @@ cython_debug/
 *.fits
 *.npy
 *.csv
+*.npz
 
 /data/
+/processed/
+/runs/
+
+scratch.py
