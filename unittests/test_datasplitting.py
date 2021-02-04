@@ -1,5 +1,5 @@
 import numpy as np
-from dataprep.loader import split
+from utils.data.splitting import split
 
 
 def test_split():
