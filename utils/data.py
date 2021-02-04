@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
@@ -8,19 +8,20 @@ import sparse
 
 def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: sparse.COO, wcs: WCS, prob_galaxy: float,
                          side_length: int, precuation: int, freq_band: float, spatial_points: int,
-                         freq_points_f: Any = None, seed=None):
+                         freq_points_f: Any = None, seed=None) -> Dict[str, np.ndarray]:
     """
-    df: truth catalogue values of the galaxies
-    hi_data: h1 data cube
-    segmentmap: sparse source map
-    wcs: world coordinate system
-    prob_galaxy: proportion of data points containing a galazy
-    side_length: side length in the spatial dimension of each data point
-    precuation: amount of pixels from the edge the source should at least be
-    freq_band: size of the frequency dimension of each data point
-    spatial_points: number of different relative spatial positions for each galaxy
-    freq_points_f: vector(function) deciding the amount of different relative frequncy for each galaxy
-    seed: random seed
+    :param df: truth catalogue values of the galaxies
+    :param hi_data: h1 data cube
+    :param segmentmap: sparse source map
+    :param wcs: world coordinate system
+    :param prob_galaxy: proportion of data points containing a galazy
+    :param side_length: side length in the spatial dimension of each data point
+    :param precuation: amount of pixels from the edge the source should at least be
+    :param freq_band: size of the frequency dimension of each data point
+    :param spatial_points: number of different relative spatial positions for each galaxy
+    :param freq_points_f: vector(function) deciding the amount of different relative frequency for each galaxy
+    :param seed: set random random seed
+    :return: Dictionary with attribute as key
     """
 
     data = dict()
@@ -49,7 +50,7 @@ def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: spar
     n_points = n_sources + n_empty
 
     data['image'] = np.zeros((n_points, side_length, side_length, freq_band))
-    data['segmentmap'] = np.zeros((n_points, side_length, side_length), dtype=np.int)
+    data['segmentmap'] = np.zeros((n_points, side_length, side_length, freq_band), dtype=np.int)
     data['position'] = np.zeros((n_points, 3, 2), dtype=np.int)
     data['class'] = np.array([1 if i < n_sources else 0 for i in range(n_points)])
     data['cluster'] = np.zeros(n_points, dtype=np.int)
@@ -70,8 +71,7 @@ def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: spar
         for j in range(spatial_points):
             for k in range(freq_points_f[part_size[i]]):
                 data['image'][counter] = hi_data[x[j, 0]:x[j, 1], y[j, 0]:y[j, 1], freq[k, 0]:freq[k, 1]]
-                data['segmentmap'][counter] = np.sum(segmentmap[x[j, 0]:x[j, 1], y[j, 0]:y[j, 1], freq[k, 0]:freq[k, 1]],
-                                                     axis=2)
+                data['segmentmap'][counter] = segmentmap[x[j, 0]:x[j, 1], y[j, 0]:y[j, 1], freq[k, 0]:freq[k, 1]].todense()
                 data['position'][counter] = np.array([x[j], y[j], freq[k]])
                 data['cluster'][counter] = cluster
                 counter += 1
