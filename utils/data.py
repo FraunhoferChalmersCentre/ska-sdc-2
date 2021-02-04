@@ -8,8 +8,23 @@ import sparse
 
 def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: sparse.COO, wcs: WCS, prob_galaxy: float,
                          side_length: int, precuation: int, freq_band: float, spatial_points: int,
-                         freq_points_f: Any=None, seed=None):
+                         freq_points_f: Any = None, seed=None):
+    """
+    df: truth catalogue values of the galaxies
+    hi_data: h1 data cube
+    segmentmap: sparse source map
+    wcs: world coordinate system
+    prob_galaxy: proportion of data points containing a galazy
+    side_length: side length in the spatial dimension of each data point
+    precuation: amount of pixels from the edge the source should at least be
+    freq_band: size of the frequency dimension of each data point
+    spatial_points: number of different relative spatial positions for each galaxy
+    freq_points_f: vector(function) deciding the amount of different relative frequncy for each galaxy
+    seed: random seed
+    """
+
     data = dict()
+    hi_data = np.transpose(hi_data)
     positions = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0).astype(np.int)
     positions = positions[:, :2]
     lower_freq, upper_freq = freq_boundary(df['central_freq'].values, df['w20'].values)
@@ -33,7 +48,7 @@ def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: spar
     n_empty = n_cubes * freq_empty
     n_points = n_sources + n_empty
 
-    data['image'] = np.zeros((n_points, freq_band, side_length, side_length))
+    data['image'] = np.zeros((n_points, side_length, side_length, freq_band))
     data['segmentmap'] = np.zeros((n_points, side_length, side_length), dtype=np.int)
     data['position'] = np.zeros((n_points, 3, 2), dtype=np.int)
     data['class'] = np.array([1 if i < n_sources else 0 for i in range(n_points)])
@@ -49,15 +64,15 @@ def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: spar
         source_pos = positions[i]
 
         x, y = random_center_box(rand.rr_sample(spatial_points, 2), side_length, source_pos, precuation, [0, 0],
-                                 [hi_data.shape[1], hi_data.shape[2]])
+                                 [hi_data.shape[0], hi_data.shape[1]])
         freq = random_in_interval(rand.rr_sample(freq_points_f[part_size[i]], 1), np.array([[l_band, u_band]]),
                                   freq_band)[0]
         for j in range(spatial_points):
             for k in range(freq_points_f[part_size[i]]):
-                data['image'][counter] = hi_data[freq[k, 0]:freq[k, 1], x[j, 0]:x[j, 1], y[j, 0]:y[j, 1]]
-                data['segmentmap'][counter] = np.sum(segmentmap[freq[k, 0]:freq[k, 1], x[j, 0]:x[j, 1], y[j, 0]:y[j, 1]],
-                                                    axis=0)
-                data['position'][counter] = np.array([freq[k], x[j], y[j]])
+                data['image'][counter] = hi_data[x[j, 0]:x[j, 1], y[j, 0]:y[j, 1], freq[k, 0]:freq[k, 1]]
+                data['segmentmap'][counter] = np.sum(segmentmap[x[j, 0]:x[j, 1], y[j, 0]:y[j, 1], freq[k, 0]:freq[k, 1]],
+                                                     axis=2)
+                data['position'][counter] = np.array([x[j], y[j], freq[k]])
                 data['cluster'][counter] = cluster
                 counter += 1
         cluster += 1
@@ -70,12 +85,12 @@ def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: spar
         freq = random_in_interval(rand.rr_sample(freq_empty, 1), np.array([[l_band, u_band]]), freq_band)[0]
         freq = inside_box([freq], [0], [hi_data.shape[0]])[0]
         x, y = random_center_box(np.array([[0.5, 0.5]]), side_length, coordinate[1:], 0, [0, 0],
-                                 [hi_data.shape[1], hi_data.shape[2]])
-        sum_map = np.sum(segmentmap[np.min(freq):np.max(freq), x[0, 0]:x[0, 1], y[0, 0]:y[0, 1]])
+                                 [hi_data.shape[0], hi_data.shape[1]])
+        sum_map = np.sum(segmentmap[x[0, 0]:x[0, 1], y[0, 0]:y[0, 1], np.min(freq):np.max(freq)])
         if sum_map == 0:
             for i in range(freq_empty):
-                data['image'][counter] = hi_data[freq[i, 0]:freq[i, 1], x[0, 0]:x[0, 1], y[0, 0]:y[0, 1]]
-                data['position'][counter] = np.array([freq[i], x[0], y[0]])
+                data['image'][counter] = hi_data[x[0, 0]:x[0, 1], y[0, 0]:y[0, 1], freq[i, 0]:freq[i, 1]]
+                data['position'][counter] = np.array([x[0], y[0], freq[i]])
                 data['cluster'][counter] = cluster
                 counter += 1
             cluster += 1
