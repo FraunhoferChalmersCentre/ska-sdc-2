@@ -143,6 +143,7 @@ cython_debug/
 *.fits
 *.npy
 *.csv
+*.txt
 *.npz
 
 /data/
