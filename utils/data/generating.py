@@ -26,20 +26,20 @@ def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: spar
 
     data = dict()
     hi_data = np.transpose(hi_data)
-    positions = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0).astype(np.int)
+    positions = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0).astype(np.int32)
     positions = positions[:, :2]
     lower_freq, upper_freq = freq_boundary(df['central_freq'].values, df['w20'].values)
     upper_band = wcs.all_world2pix(
         np.concatenate((df[['ra', 'dec']].values, lower_freq.reshape(lower_freq.shape[0], 1)), axis=1), 0).astype(
-        np.int)[:, 2]
+        np.int32)[:, 2]
     lower_band = wcs.all_world2pix(
         np.concatenate((df[['ra', 'dec']].values, upper_freq.reshape(upper_freq.shape[0], 1)), axis=1), 0).astype(
-        np.int)[:, 2]
+        np.int32)[:, 2]
     part_size = ((upper_band - lower_band) / freq_band).astype(int)
     if freq_points_f is None:
         freq_points_f = np.arange(np.min(part_size), np.max(part_size) + 1) * 2 + 1
     elif type(freq_points_f) == int:
-        freq_points_f = np.ones(np.max(part_size) - np.min(part_size) + 1, dtype=np.int) * freq_points_f
+        freq_points_f = np.ones(np.max(part_size) - np.min(part_size) + 1, dtype=np.int32) * freq_points_f
 
     df_size = df.shape[0]
     total_freq_p = np.sum(np.bincount(part_size) * freq_points_f)
@@ -49,11 +49,11 @@ def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: spar
     n_empty = n_cubes * freq_empty
     n_points = n_sources + n_empty
 
-    data['image'] = np.zeros((n_points, side_length, side_length, freq_band))
-    data['segmentmap'] = np.zeros((n_points, side_length, side_length, freq_band), dtype=np.int)
-    data['position'] = np.zeros((n_points, 3, 2), dtype=np.int)
+    data['image'] = np.zeros((n_points, 1, side_length, side_length, freq_band))
+    data['segmentmap'] = np.zeros((n_points, 1, side_length, side_length, freq_band), dtype=np.int32)
+    data['position'] = np.zeros((n_points, 3, 2), dtype=np.int32)
     data['class'] = np.array([1 if i < n_sources else 0 for i in range(n_points)])
-    data['cluster'] = np.zeros(n_points, dtype=np.int)
+    data['cluster'] = np.zeros(n_points, dtype=np.int32)
     rand = Randomizer(seed)
 
     # Sources Data
@@ -71,7 +71,8 @@ def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: spar
         for j in range(spatial_points):
             for k in range(freq_points_f[part_size[i]]):
                 data['image'][counter] = hi_data[x[j, 0]:x[j, 1], y[j, 0]:y[j, 1], freq[k, 0]:freq[k, 1]]
-                data['segmentmap'][counter] = segmentmap[x[j, 0]:x[j, 1], y[j, 0]:y[j, 1], freq[k, 0]:freq[k, 1]].todense()
+                data['segmentmap'][counter] = segmentmap[x[j, 0]:x[j, 1], y[j, 0]:y[j, 1],
+                                              freq[k, 0]:freq[k, 1]].todense()
                 data['position'][counter] = np.array([x[j], y[j], freq[k]])
                 data['cluster'][counter] = cluster
                 counter += 1
@@ -79,7 +80,7 @@ def create_data_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: spar
 
     # Empty Data
     while counter < n_points:
-        coordinate = (rand.sample(1, 3) * hi_data.shape).astype(np.int)[0]
+        coordinate = (rand.sample(1, 3) * hi_data.shape).astype(np.int32)[0]
         l_band = coordinate[0]
         u_band = l_band + freq_empty * freq_band
         freq = random_in_interval(rand.rr_sample(freq_empty, 1), np.array([[l_band, u_band]]), freq_band)[0]
@@ -160,9 +161,9 @@ def random_center_box(rdn, total_length, center_point, precuation, min_values, m
     n_points = rdn.shape[0]
     dim = rdn.shape[1]
     radius = int(total_length / 2) - precuation
-    coord = [np.zeros((n_points, 2), dtype=np.int) for _ in range(dim)]
+    coord = [np.zeros((n_points, 2), dtype=np.int32) for _ in range(dim)]
     for i in range(dim):
-        coord[i][:, 0] = (rdn[:, i] * 2 * radius + center_point[i] - int(total_length / 2) - radius).astype(np.int)
+        coord[i][:, 0] = (rdn[:, i] * 2 * radius + center_point[i] - int(total_length / 2) - radius).astype(np.int32)
         coord[i][:, 1] = coord[i][:, 0] + total_length
     return inside_box(coord, min_values, max_values)
 
@@ -170,7 +171,7 @@ def random_center_box(rdn, total_length, center_point, precuation, min_values, m
 def random_in_interval(rdn, interval, length):
     n_points = rdn.shape[0]
     dim = rdn.shape[1]
-    coord = [np.zeros((n_points, 2), dtype=np.int) for _ in range(dim)]
+    coord = [np.zeros((n_points, 2), dtype=np.int32) for _ in range(dim)]
     for i in range(dim):
         coord[i][:, 0] = rdn[:, i] * max((interval[i, 1] - interval[i, 0] - length), 0) + interval[i, 0] + length / 2
         coord[i][:, 1] = coord[i][:, 0] + length

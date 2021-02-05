@@ -1,8 +1,10 @@
 import numpy as np
-from typing import Dict
-from utils.data.ska_dataset import SKADataSet
-from utils.tensor import num_workers
-from torch.utils.data import DataLoader
+from typing import Dict, Tuple
+from utils.data.ska_dataset import SKADataSet, StaticSKATransformationDecorator
+import torch
+
+
+def to_float(*tensors: Tuple[torch.Tensor]): return tuple(map(lambda t: t.float(), tensors))
 
 
 def split(dataset: Dict[str, np.ndarray], left_fraction: float, unit_key: str):
@@ -15,9 +17,10 @@ def split(dataset: Dict[str, np.ndarray], left_fraction: float, unit_key: str):
     return {k: v[is_left] for k, v in dataset.items()}, {k: v[~is_left] for k, v in dataset.items()}
 
 
-def splitted_loaders(dataset: Dict[str, np.ndarray], train_fraction: float, batch_size: int, unit_key: str = 'cluster'):
+def splitted_loaders(dataset: Dict[str, np.ndarray], train_fraction: float, unit_key: str = 'cluster'):
     train, validation = split(dataset, train_fraction, unit_key)
-    trainset, validation_set = SKADataSet(train), SKADataSet(validation)
-    trainloader = DataLoader(trainset, shuffle=True, batch_size=batch_size, num_workers=num_workers())
-    valloader = DataLoader(validation_set, shuffle=False, batch_size=batch_size, num_workers=num_workers())
-    return trainloader, valloader
+    training_set, validation_set = SKADataSet(train), SKADataSet(validation)
+
+    training_set = StaticSKATransformationDecorator(['image', 'segmentmap'], to_float, training_set)
+    validation_set = StaticSKATransformationDecorator(['image', 'segmentmap'], to_float, validation_set)
+    return training_set, validation_set

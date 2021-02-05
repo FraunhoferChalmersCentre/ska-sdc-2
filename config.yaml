@@ -1,13 +1,16 @@
 # Ensure very large files can be stored in these paths
 # dot (.) means project directory
 path:
-  data: ./data/
-  processed: ./processed/
+  data: ~/scratch/ska-sdc-2/data/
+  processed: ~/scratch/ska-sdc-2/processed/
 
 preprocessing:
-  min_axis_pixels: 0.5
+  min_axis_pixels: 0.5 # minimum size of minor axis in pixels to be used for training
 
-
+segmentation:
+  cube_size:
+    spatial: 64
+    freq: 64
 
 torch:
-  num_workers = 0 # Ignored if CPU is used, larger values require more RAM
+  num_workers: 0 # Ignored if CPU is used, larger values require more RAM

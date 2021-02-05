@@ -14,9 +14,9 @@ with open(ROOT_DIR + '/config.yaml') as f:
 for k, v in config.get('path').items():
     if socket.gethostname().split('.')[0] == 'nuthatch':
         edited_value = v.replace('.', '/scratch/ska/data/')
-
     else:
         edited_value = v.replace('.', ROOT_DIR)
+        edited_value = v.replace('~', os.path.expanduser("~"))
 
     edited_value = os.path.realpath(edited_value)
     config['path'][k] = edited_value

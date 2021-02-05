@@ -13,6 +13,7 @@ def _ntuple_same(n):
         elif isinstance(x, collections.abc.Iterable):
             assert len(set(x)) == 1, 'the size of kernel must be the same for each side'
             return tuple(repeat(x[0], n))
+
     return parse
 
 
@@ -28,6 +29,8 @@ class BaseConverter(object):
 
     def __init__(self, model):
         """ Convert the model to its corresponding counterparts and deal with original weights if necessary """
+        self.model = model
+        self.linear = False
 
     def convert_module(self, module):
         """
@@ -167,12 +170,5 @@ def fix_dim_linear(model, r_input):
         with torch.no_grad():
             weights = next(child.parameters())
             new_weights = next(getattr(module, child_name).parameters())
-            repeats = np.ceil(new_weights.shape[-1]/weights.shape[-1]).astype(int)
-            new_weights.copy_(torch.cat([weights]*repeats, dim=-1)[:, :new_weights.shape[-1]])
-
-
-import torchvision.models as models
-alexnet = models.alexnet()
-r_input = torch.rand((1, 3, 224, 224, 70))
-Conv3dConverter(alexnet, -1, r_input)
-print(alexnet)
+            repeats = np.ceil(new_weights.shape[-1] / weights.shape[-1]).astype(int)
+            new_weights.copy_(torch.cat([weights] * repeats, dim=-1)[:, :new_weights.shape[-1]])
