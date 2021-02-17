@@ -53,5 +53,5 @@ def to_numpy(*tensors):
 
 
 def num_workers():
-    workers = config.get('torch', 'num_workers') if tw.device.type == 'cuda' else 0
+    workers = config['torch']['num_workers'] if tw.device.type == 'cuda' else 0
     return workers

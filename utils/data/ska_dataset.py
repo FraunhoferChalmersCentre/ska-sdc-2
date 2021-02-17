@@ -5,8 +5,6 @@ from typing import Callable, List
 import torch
 from torch.utils.data import Dataset
 
-from utils.tensor import tw
-
 
 class AbstractSKADataset(Dataset):
 
@@ -37,11 +35,11 @@ class SKADataSet(AbstractSKADataset):
 
         self.data = attributes
         for k, v in attributes.items():
-            self.data[k] = tw(v)
+            self.data[k] = torch.Tensor(v)
 
     def add_attribute(self, additional_attributes: dict):
         for k, v in additional_attributes.items():
-            self.data[k] = tw(v)
+            self.data[k] = torch.Tensor(v)
 
     def get_keys(self):
         return self.data.keys()

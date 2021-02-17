@@ -143,11 +143,12 @@ cython_debug/
 *.fits
 *.npy
 *.csv
-*.txt
 *.npz
 
 /data/
 /processed/
-/runs/
+/runs/*
+*/runs/
+/notebooks/tb_logs/
 
 scratch.py

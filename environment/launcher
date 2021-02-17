@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+export NCCL_DEBUG=INFO
+export NCCL_IB_HCA=ipogif0
+export NCCL_IB_CUDA_SUPPORT=1
+
+export TENSORBOARD_PROXY_URL=https://$USER.jupyter.cscs.ch/hub/user-redirect/proxy/%PORT%/
+
+export HOROVOD_TIMELINE=$HOME/timeline.json
+
+export PYTHONPATH=''
+if [ "$SOURCE_JUPYTERHUBENV" == true ]; then
+    source $HOME/.jupyterhub.env
+fi
+
+module load daint-gpu
+module load ipcmagic
+module load PyTorch/1.6.0
+module load Horovod/0.19.5-CrayGNU-20.08-pt-1.6.0
+
+source /users/$USER/env/bin/activate
+/users/$USER/env/bin/python -m ipykernel_launcher $@

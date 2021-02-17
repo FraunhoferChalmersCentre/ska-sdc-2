@@ -21,9 +21,9 @@ def prepare_df(df: pd.DataFrame, header: Header):
     df = df.copy()
     wcs = WCS(header)
     positions = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0)
-    df['x'] = positions[:, 0].astype(np.int)
-    df['y'] = positions[:, 1].astype(np.int)
-    df['z'] = positions[:, 2].astype(np.int)
+    df['x'] = positions[:, 0].astype(np.int32)
+    df['y'] = positions[:, 1].astype(np.int32)
+    df['z'] = positions[:, 2].astype(np.int32)
 
     df['n_channels'] = header['RESTFREQ'] * df['w20'] / (SPEED_OF_LIGHT * header['CDELT3'])
 
@@ -36,7 +36,7 @@ def prepare_df(df: pd.DataFrame, header: Header):
 
 
 def dense_cube(row: pd.Series):
-    square_side = np.round(2 * max(row.major_radius_pixels, row.minor_radius_pixels)).astype(np.int)
+    square_side = np.round(2 * max(row.major_radius_pixels, row.minor_radius_pixels)).astype(np.int32)
     if not square_side % 2:
         square_side += 1
 
@@ -50,7 +50,7 @@ def dense_cube(row: pd.Series):
     cross_section = transform.rotate(cross_section, row.pa)
 
     # Only use odd numbers of channels
-    n_channels = np.round(row.n_channels).astype(np.int)
+    n_channels = np.round(row.n_channels).astype(np.int32)
     n_channels += 1 if not n_channels % 2 else 0
 
     return np.repeat(cross_section[:, :, np.newaxis], n_channels, axis=2)
@@ -83,14 +83,14 @@ def create_from_df(df: pd.DataFrame, header: Header):
 
         small_dense_cube = dense_cube(row)
 
-        spans = get_spans(cube.shape, small_dense_cube.shape, row[['x', 'y', 'z']].astype(np.int))
+        spans = get_spans(cube.shape, small_dense_cube.shape, row[['x', 'y', 'z']].astype(np.int32))
 
         centers = [int(s / 2) for s in small_dense_cube.shape]
 
         small_dense_cube = small_dense_cube[tuple(starmap(lambda c, s: slice(c - s[0], c + s[1]), zip(centers, spans)))]
 
         cube[tuple(starmap(lambda c, s: slice(c - s[0], c + s[1]),
-                           zip(row[['x', 'y', 'z']].astype(np.int), spans)))] = small_dense_cube
+                           zip(row[['x', 'y', 'z']].astype(np.int32), spans)))] = small_dense_cube
 
     return COO(cube)
 
