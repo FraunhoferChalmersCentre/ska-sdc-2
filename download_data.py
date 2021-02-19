@@ -36,7 +36,7 @@ for t in args.type:
         wget.download(truth_cat_urls[t], out=filename.data.true(t))
 
     print('Downloading sky fits for {}'.format(t))
-    # wget.download(sky_urls[t], out=filename.data.sky(t))
+    wget.download(sky_urls[t], out=filename.data.sky(t))
 
     print('Downloading radio continuum counterpart fits for {}'.format(t))
     wget.download(cont_urls[t], out=filename.data.cont(t))

@@ -16,7 +16,6 @@ fi
 module load daint-gpu
 module load ipcmagic
 module load PyTorch/1.6.0
-module load Horovod/0.19.5-CrayGNU-20.08-pt-1.6.0
 
 source /users/$USER/env/bin/activate
 /users/$USER/env/bin/python -m ipykernel_launcher $@
