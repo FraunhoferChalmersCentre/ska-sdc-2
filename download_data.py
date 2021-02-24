@@ -1,7 +1,7 @@
 import os
 import argparse
 
-import gdown
+import wget
 from utils import filename
 from definitions import config, ROOT_DIR
 
@@ -14,35 +14,34 @@ os.chdir(ROOT_DIR)
 if not os.path.exists(config['path']['data']):
     os.makedirs(config['path']['data'])
 
-
-truth_cat_urls = {'dev_s': 'https://drive.google.com/uc?id=1acvwFHEtrlFaDXz4xAbEd_TiU7iEClMT',
-                  'dev_l': 'https://drive.google.com/uc?id=1Ga0qIP4UXCC-AWPSTdKcxpZNBb-XPTjQ',
+truth_cat_urls = {'dev_s': 'https://owncloud.ia2.inaf.it/index.php/s/fUXSO5MdK2QT9eh/download?path=%2F&files=sky_dev_truthcat_v1.1.txt',
+                  'dev_l': 'https://owncloud.ia2.inaf.it/index.php/s/hinxyghvmqdP4kh/download?path=%2F&files=sky_ldev_truthcat_v1.1.txt',
                   'eval': ''}
 
-sky_urls = {'dev_s': 'https://drive.google.com/uc?id=1vL3hc4pWpeSAJZKtjYyVCqsMlYb7LcgA',
-            'dev_l': 'https://drive.google.com/uc?id=1K3kSJjuAjnNoZ044S1bTsMPiqf-SCUOo',
-            'eval': 'https://drive.google.com/uc?id=1aNZMTW1sHISU9DWZ6Dr-APmyeMrMxLpo'}
+sky_urls = {'dev_s': 'https://owncloud.ia2.inaf.it/index.php/s/fUXSO5MdK2QT9eh/download?path=%2F&files=sky_dev.fits',
+            'dev_l': 'https://owncloud.ia2.inaf.it/index.php/s/hinxyghvmqdP4kh/download?path=%2F&files=sky_ldev.fits',
+            'eval': 'https://owncloud.ia2.inaf.it/index.php/s/IEC7eOO4Qdaoi2L/download?path=%2F&files=sky_eval.fits'}
 
-cont_urls = {'dev_s': 'https://drive.google.com/uc?id=10hkkoAaH-gbDragXp90u_yqW-FPKszf5',
-             'dev_l': 'https://drive.google.com/uc?id=1e7dlcEsdPVjt1t_hEHKnWxpc9azMKHaw',
-             'eval': 'https://drive.google.com/uc?id=1PJ3QSMZyh_QvHVcJH9o28sg9rdOV7KVc'}
+cont_urls = {'dev_s': 'https://owncloud.ia2.inaf.it/index.php/s/fUXSO5MdK2QT9eh/download?path=%2F&files=cont_dev.fits',
+             'dev_l': 'https://owncloud.ia2.inaf.it/index.php/s/hinxyghvmqdP4kh/download?path=%2F&files=cont_ldev.fits',
+             'eval': 'https://owncloud.ia2.inaf.it/index.php/s/IEC7eOO4Qdaoi2L/download?path=%2F&files=cont_eval.fits'}
 
-readme_urls = {'dev_s': 'https://drive.google.com/uc?id=11Bu0g99Jf3Qfz_tEQv7D8tahHlKMU9Hh',
-               'dev_l': 'https://drive.google.com/uc?id=1UFdRDz1kbS9ukpEV_UMK6nhPN_rMHtlq',
-               'eval': 'https://drive.google.com/uc?id=1Bljk1MvA-lZEqlpAQjavuWdoLSQtkLBl'}
+readme_urls = {'dev_s': 'https://owncloud.ia2.inaf.it/index.php/s/fUXSO5MdK2QT9eh/download?path=%2F&files=README_dev.txt',
+               'dev_l': 'https://owncloud.ia2.inaf.it/index.php/s/hinxyghvmqdP4kh/download?path=%2F&files=README_ldev.txt',
+               'eval': 'https://owncloud.ia2.inaf.it/index.php/s/IEC7eOO4Qdaoi2L/download?path=%2F&files=README_eval.txt'}
 
 for t in args.type:
     if t != 'eval':
         print('Downloading truth catalogue for {}'.format(t))
-        gdown.download(truth_cat_urls[t], filename.data.true(t), quiet=True)
+        wget.download(truth_cat_urls[t], out=filename.data.true(t))
 
     print('Downloading sky fits for {}'.format(t))
-    gdown.download(sky_urls[t], filename.data.sky(t), quiet=True)
+    # wget.download(sky_urls[t], out=filename.data.sky(t))
 
     print('Downloading radio continuum counterpart fits for {}'.format(t))
-    gdown.download(cont_urls[t], filename.data.cont(t), quiet=True)
+    wget.download(cont_urls[t], out=filename.data.cont(t))
 
     print('Downloading README file for {}'.format(t))
-    gdown.download(readme_urls[t], filename.data.readme(t), quiet=True)
+    wget.download(readme_urls[t], out=filename.data.readme(t))
 
 print('Finished downloading')
