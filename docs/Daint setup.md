@@ -16,8 +16,4 @@ Host ela.cscs.ch
 3. `cd ~`
 4. `git clone git@github.com:henrikhakansson/ska-sdc-2.git`
 4. `source ska-sdc-2/environment/daint.bash`
-5. `cd scratch` (symbolic link created in previous step)
-6. `git clone git@github.com:henrikhakansson/ska-sdc-2.git`
-7. `cd ska-sdc-2`
-8. `python download_data.py`
-9. Now you should be able to use notebooks found in repository, access from jupyter.cscs.ch
+5. Now you should be able to use notebooks found in repository, access from jupyter.cscs.ch

@@ -42,8 +42,36 @@ class AbstractSKADataset(Dataset):
     def __getitem__(self, item) -> dict:
         raise NotImplementedError
 
+class BaseSKADataSet(AbstractSKADataset):
+    def __getitem__(self, item):
+        if isinstance(item, slice):
+            raise NotImplementedError('Not implemented slice items')
+        elif isinstance(item, tuple):
+            raise NotImplementedError('Not implemented tuple items')
+        else:
+            shape = self.get_attribute('image')[item].size()
+            
+            slices = [slice(None)] * len(shape)
+            
+            dim = self.get_attribute('dim').astype(np.int32)
+            randoms = self.get_randomizer().random(len(dim), item)
+            slices[-len(dim):] = [slice(int(r * (s - d)), int(r * (s - d)) + d) for s, d, r in zip(shape[-len(dim):], dim, randoms)]
 
-class SKADataSet(AbstractSKADataset):
+            get_item = dict()
+            get_item['image'] = self.get_attribute('image')[item][slices]
+            
+            if item < self.get_attribute('index'):
+                get_item['segmentmap'] = self.get_attribute('segmentmap')[item][slices]
+                get_item.update({k: self.get_attribute(k)[item] for k in self.get_soruce_keys()})
+            else:
+                get_item['segmentmap'] = self.get_attribute('segmentmap')[self.get_attribute('index')]
+                get_item.update({k: self.get_attribute(k)[item] for k in self.get_common_keys()})
+                get_item.update(
+                    {k: self.get_attribute(k)[self.get_attribute('index')] for k in self.get_different_keys()})
+        return get_item
+
+
+class SKADataSet(BaseSKADataSet):
     def __init__(self, attributes: dict, random_type: Union[int, bool] = True, source_keys: list = None,
                  empty_keys: list = None):
 
@@ -111,56 +139,8 @@ class SKADataSet(AbstractSKADataset):
     def __len__(self):
         return len(self.get_attribute('image'))
 
-    def __getitem__(self, item):
-        if isinstance(item, slice):
-            indeces = np.arange(self.__len__())[item]
-            shapes = [v.size() for v in self.get_attribute('image')[item]]
-            index_from = [([shape[0] - self.get_attribute('dim')[0], shape[1] - self.get_attribute('dim')[1],
-                            shape[2] - self.get_attribute('dim')[2]] *
-                           self.get_randomizer().random(3, idx)).astype(np.int) for shape, idx in zip(shapes, indeces)]
-            index_to = [i_from + np.array(
-                [self.get_attribute('dim')[0], self.get_attribute('dim')[1], self.get_attribute('dim')[2]]) for i_from
-                        in index_from]
-            get_item = dict()
-            get_item['image'] = torch.stack([image[i0[0]:i1[0], i0[1]:i1[1], i0[2]:i1[2]] for image, i0, i1 in
-                                             zip(self.get_attribute('image')[item], index_from, index_to)])
-            indeces_less = indeces[indeces < self.get_attribute('index')]
-            indeces_greater = indeces[indeces >= self.get_attribute('index')]
-            segmentmap = list()
-            segmentmap += [self.get_attribute('segmentmap')[indeces_less[i]]
-                           [index_from[i][0]:index_to[i][0], index_from[i][1]:index_to[i][1],
-                           index_from[i][2]:index_to[i][2]]
-                           for i in range(len(indeces_less))]
-            segmentmap += [self.get_attribute('segmentmap')[self.get_attribute('index')] for i in
-                           range(len(indeces_greater))]
-            get_item['segmentmap'] = torch.stack(segmentmap)
-            for c_key in self.get_common_keys():
-                get_item[c_key] = torch.stack([self.get_attribute(c_key)[i] for i in indeces])
-            for d_key in self.get_different_keys():
-                get_item[d_key] = torch.stack([self.get_attribute(d_key)[i] for i in indeces_less])
-        else:
-            shape = self.get_attribute('image')[item].size()
-            index_from = ([shape[0] - self.get_attribute('dim')[0], shape[1] - self.get_attribute('dim')[1],
-                           shape[2] - self.get_attribute('dim')[2]] *
-                          self.get_randomizer().random(3, item)).astype(np.int)
-            index_to = index_from + np.array(
-                [self.get_attribute('dim')[0], self.get_attribute('dim')[1], self.get_attribute('dim')[2]])
-            get_item = dict()
-            get_item['image'] = self.get_attribute('image')[item][index_from[0]:index_to[0], index_from[1]:index_to[1],
-                                index_from[2]:index_to[2]]
-            if item < self.get_attribute('index'):
-                get_item['segmentmap'] = self.get_attribute('segmentmap')[item][index_from[0]:index_to[0],
-                                         index_from[1]:index_to[1], index_from[2]:index_to[2]]
-                get_item.update({k: self.get_attribute(k)[item] for k in self.get_soruce_keys()})
-            else:
-                get_item['segmentmap'] = self.get_attribute('segmentmap')[self.get_attribute('index')]
-                get_item.update({k: self.get_attribute(k)[item] for k in self.get_common_keys()})
-                get_item.update(
-                    {k: self.get_attribute(k)[self.get_attribute('index')] for k in self.get_different_keys()})
-        return get_item
 
-
-class StaticSKATransformationDecorator(AbstractSKADataset, ABC):
+class StaticSKATransformationDecorator(BaseSKADataSet):
 
     def __init__(self, transformed_keys: Union[List[str], str], transform: Callable, decorated: AbstractSKADataset):
         self.decorated = decorated.clone()
@@ -173,21 +153,6 @@ class StaticSKATransformationDecorator(AbstractSKADataset, ABC):
             return {transformed_keys: transformed}
         else:
             raise NotImplementedError
-
-    """
-    def __init__(self, transform_input: List[str], transform_output: List[str], transform: Callable, decorated: AbstractSKADataset):
-        self.decorated = decorated.clone()
-        self.transformed_data = self._transform_attributes(transform, transform_input, transform_output)
-
-    def _transform_attributes(self, transform, transform_input, transform_output):
-        items = tuple(map(lambda k: self.decorated.get_attribute(k), transform_input))
-        items = transform(*items)
-        for key in transform_output:
-            self.decorated.delete_key(key)
-        if isinstance(items, list):
-            items = (items,)
-        return {k: v for k, v in zip(transform_output, items)}
-    """
 
     def get_keys(self):
         return list(self.transformed_data.keys()) + list(self.decorated.get_keys())
@@ -227,54 +192,6 @@ class StaticSKATransformationDecorator(AbstractSKADataset, ABC):
 
     def __len__(self):
         return len(self.get_attribute('image'))
-
-    def __getitem__(self, item):
-        if isinstance(item, slice):
-            indeces = np.arange(self.__len__())[item]
-            shapes = [v.size() for v in self.get_attribute('image')[item]]
-            index_from = [([shape[0] - self.get_attribute('dim')[0], shape[1] - self.get_attribute('dim')[1],
-                            shape[2] - self.get_attribute('dim')[2]] *
-                           self.get_randomizer().random(3, idx)).astype(np.int) for shape, idx in zip(shapes, indeces)]
-            index_to = [i_from + np.array(
-                [self.get_attribute('dim')[0], self.get_attribute('dim')[1], self.get_attribute('dim')[2]]) for i_from
-                        in index_from]
-            get_item = dict()
-            get_item['image'] = torch.stack([image[i0[0]:i1[0], i0[1]:i1[1], i0[2]:i1[2]] for image, i0, i1 in
-                                             zip(self.get_attribute('image')[item], index_from, index_to)])
-            indeces_less = indeces[indeces < self.get_attribute('index')]
-            indeces_greater = indeces[indeces >= self.get_attribute('index')]
-            segmentmap = list()
-            segmentmap += [self.get_attribute('segmentmap')[indeces_less[i]]
-                           [index_from[i][0]:index_to[i][0], index_from[i][1]:index_to[i][1],
-                           index_from[i][2]:index_to[i][2]]
-                           for i in range(len(indeces_less))]
-            segmentmap += [self.get_attribute('segmentmap')[self.get_attribute('index')] for i in
-                           range(len(indeces_greater))]
-            get_item['segmentmap'] = torch.stack(segmentmap)
-            for c_key in self.get_common_keys():
-                get_item[c_key] = torch.stack([self.get_attribute(c_key)[i] for i in indeces])
-            for d_key in self.get_different_keys():
-                get_item[d_key] = torch.stack([self.get_attribute(d_key)[i] for i in indeces_less])
-        else:
-            shape = self.get_attribute('image')[item].size()
-            index_from = ([shape[0] - self.get_attribute('dim')[0], shape[1] - self.get_attribute('dim')[1],
-                           shape[2] - self.get_attribute('dim')[2]] *
-                          self.get_randomizer().random(3, item)).astype(np.int)
-            index_to = index_from + np.array(
-                [self.get_attribute('dim')[0], self.get_attribute('dim')[1], self.get_attribute('dim')[2]])
-            get_item = dict()
-            get_item['image'] = self.get_attribute('image')[item][index_from[0]:index_to[0], index_from[1]:index_to[1],
-                                index_from[2]:index_to[2]]
-            if item < self.get_attribute('index'):
-                get_item['segmentmap'] = self.get_attribute('segmentmap')[item][index_from[0]:index_to[0],
-                                         index_from[1]:index_to[1], index_from[2]:index_to[2]]
-                get_item.update({k: self.get_attribute(k)[item] for k in self.get_soruce_keys()})
-            else:
-                get_item['segmentmap'] = self.get_attribute('segmentmap')[self.get_attribute('index')]
-                get_item.update({k: self.get_attribute(k)[item] for k in self.get_common_keys()})
-                get_item.update(
-                    {k: self.get_attribute(k)[self.get_attribute('index')] for k in self.get_different_keys()})
-        return get_item
 
 
 class DynamicSKATransformationDecorator(AbstractSKADataset, ABC):

@@ -16,7 +16,7 @@ for k, v in config.get('path').items():
         edited_value = v.replace('.', '/scratch/ska/data/')
     else:
         edited_value = v.replace('.', ROOT_DIR)
-        edited_value = v.replace('~', os.path.expanduser("~"))
+        edited_value = edited_value.replace('~', os.path.expanduser("~"))
 
     edited_value = os.path.realpath(edited_value)
     config['path'][k] = edited_value

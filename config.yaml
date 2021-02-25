@@ -1,8 +1,8 @@
 # Ensure very large files can be stored in these paths
 # dot (.) means project directory
 path:
-  data: ~/scratch/ska-sdc-2/data/
-  processed: ~/scratch/ska-sdc-2/processed/
+  data: ~/project/data/
+  processed: ./processed/
 
 preprocessing:
   min_axis_pixels: 0.5 # minimum size of minor axis in pixels to be used for training
