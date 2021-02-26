@@ -30,6 +30,9 @@ class ProcessedFileName(DirectoryFileName):
     def segmentmap(self, types):
         return self._eval_dev_name(types, 'segmap_eval.npz', 'segmap_{}dev.npz')
 
+    def allocation_dict(self, types):
+        return self._eval_dev_name(types, 'segmap_eval.npz', 'allocation_{}dev.pb')
+
 
 class DataFileName(DirectoryFileName):
     def __init__(self):

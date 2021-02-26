@@ -1,28 +1,69 @@
-from typing import Dict
+from itertools import starmap
+from typing import Dict, List
+import sys
 
 import numpy as np
 import pandas as pd
 from astropy.wcs import WCS
-from astropy.io.fits import header
+from astropy.io import fits
 import sparse
+import torch
+from tqdm import tqdm_notebook as tqdm
+
+# attributes for the dataset generally
+GLOBAL_ATTRIBUTES = {'dim', 'index'}
+
+# attributes only defined in boxes with source
+SOURCE_ATTRIBUTES = {'segmentmap', 'allocated_voxels','ra', 'dec', 'hi_size', 'line_flux_integral',
+                     'central_freq', 'pa', 'i', 'w20'}
+
+# attributes only defined in boxes without source
+EMPTY_ATTRIBUTES = {}
+
+# attributes defined for all boxes
+COMMON_ATTRIBUTES = {'image', 'position'}
+
+H1_REST_FREQ = 1.420e9
+SPEED_OF_LIGHT = 3e5
+
+f0 = None
+hi_data = None
+
+def power_transform(f0, f1):
+    global hi_data
+    a = torch.tensor(100)
+    for i in range(hi_data.shape[-1]):
+        hi_data[:, :, i] = (hi_data[:, :, i] - hi_data[:, :, i].min()) / (
+                torch.quantile(hi_data[:, :, i], .999) - hi_data[:, :, i].min())
+        hi_data[:, :, i] = (torch.pow(a, hi_data[:, :, i]) - 1) / a
+
+def refetch_hi(hi_cube_file, min_f0, max_f1):
+    global hi_data, f0
+    f0 = min_f0
+    hi_data_fits = fits.getdata(hi_cube_file).T
+    hi_data = torch.tensor(hi_data_fits[:, :, min_f0:max_f1].astype(np.float32), dtype=torch.float32)
+    power_transform(min_f0, max_f1)
+    
+
+def get_hi_cube_slice(hi_cube_file: str, slices: tuple):
+    global hi_data, f0
+    f_slice = slice(slices[-1].start - f0, slices[-1].stop - f0)
+    mod_slices = (slices[0], slices[1], f_slice)
+    return hi_data[mod_slices].clone()
 
 
-def create_datacube_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: sparse.COO, wcs: WCS, head: header,
-                             prob_galaxy: float, cube_dim: np.array, empty_cube_dim: np.array) -> Dict:
-    """
-    :param df: truth catalogue values of the galaxies
-    :param hi_data: h1 data cube
-    :param segmentmap: sparse source map
-    :param wcs: world coordinate system
-    :param head: header information from data file
-    :param prob_galaxy: proportion of data points containing a galaxy
-    :param cube_dim: dimension of SMALL sampling cube (n*m*o)
-    :param empty_cube_dim: dimension of BIG cube to sample from (p*q*r)
-    :return: Dictionary with attribute as key
-    """
+def freq_boundary(central_freq, w20):
+    bw = H1_REST_FREQ * w20 / SPEED_OF_LIGHT
+    upper_freq = central_freq - bw / 2
+    lower_freq = central_freq + bw / 2
+    return lower_freq, upper_freq
 
-    data = dict()
-    positions = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0).astype(np.int32)
+
+def prepare_df(df: pd.DataFrame, hi_cube_file: str, coord_keys: List[str], cube_dim: tuple):
+    header = fits.getheader(hi_cube_file)
+    wcs = WCS(header)
+
+    df[coord_keys] = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0).astype(np.int32)
     lower_freq, upper_freq = freq_boundary(df['central_freq'].values, df['w20'].values)
     upper_band = wcs.all_world2pix(
         np.concatenate((df[['ra', 'dec']].values, lower_freq.reshape(lower_freq.shape[0], 1)), axis=1), 0).astype(
@@ -30,87 +71,140 @@ def create_datacube_set_dict(df: pd.DataFrame, hi_data: np.ndarray, segmentmap: 
     lower_band = wcs.all_world2pix(
         np.concatenate((df[['ra', 'dec']].values, upper_freq.reshape(upper_freq.shape[0], 1)), axis=1), 0).astype(
         np.int32)[:, 2]
-    pixel_width_arcsec = abs(head['CDELT1']) * 3600
+    pixel_width_arcsec = abs(header['CDELT1']) * 3600
     major_radius_pixels = np.ceil(df['hi_size'] / (pixel_width_arcsec * 2)).astype(np.int32)
 
     # Size of each cube with a source
-    total_x_size = cube_dim[0] - 1 + major_radius_pixels
-    total_y_size = cube_dim[1] - 1 + major_radius_pixels
-    total_f_size = ((upper_band - lower_band) / 2 + cube_dim[2]).astype(np.int32)
+    df['total_x_size'] = cube_dim[0] - 1 + major_radius_pixels
+    df['total_y_size'] = cube_dim[1] - 1 + major_radius_pixels
+    df['total_f_size'] = ((upper_band - lower_band) / 2 + cube_dim[2]).astype(np.int32)
 
-    # Number of cubes
-    n_sources = df.shape[0]
+    shape = tuple(map(lambda i: header['NAXIS{}'.format(i)], range(1, 4)))
 
-    # Create output dict
-    data['image'] = list()
-    data['segmentmap'] = list()
-    data['position'] = list()
-    data['dim'] = cube_dim
-    data['ra'] = list()
-    data['dec'] = list()
-    data['hi_size'] = list()
-    data['line_flux_integral'] = list()
-    data['central_freq'] = list()
-    data['pa'] = list()
-    data['i'] = list()
-    data['w20'] = list()
+    for i, p in enumerate(coord_keys):
+        df['{}0'.format(p)] = (df[p] - df['total_{}_size'.format(p)]).clip(lower=0)
+        df['{}1'.format(p)] = (df[p] + df['total_{}_size'.format(p)]).clip(upper=shape[i])
+    
+    df = df.sort_values(by='f1', ignore_index=True)
 
-    x_max = hi_data.shape[0]
-    y_max = hi_data.shape[1]
-    f_max = hi_data.shape[2]
+    return df
 
-    # Sources Data
-    for i in range(n_sources):
-        x0, x1 = max(positions[i][0] - total_x_size[i], 0), min(positions[i][0] + total_x_size[i], x_max)
-        y0, y1 = max(positions[i][1] - total_y_size[i], 0), min(positions[i][1] + total_y_size[i], y_max)
-        f0, f1 = max(positions[i][2] - total_f_size[i], 0), min(positions[i][2] + total_f_size[i], f_max)
 
-        segment = segmentmap[x0:x1, y0:y1, f0:f1].todense()
-        if np.sum(segment) > 0:
-            data['image'].append(hi_data[x0:x1, y0:y1, f0:f1])
-            data['segmentmap'].append(segment)
-            data['position'].append(np.array([[x0, y0, f0], [x1, y1, f1]]))
-            data['ra'].append([df.loc[i, 'ra']])
-            data['dec'].append([df.loc[i, 'dec']])
-            data['hi_size'].append([df.loc[i, 'hi_size']])
-            data['line_flux_integral'].append([df.loc[i, 'line_flux_integral']])
-            data['central_freq'].append([df.loc[i, 'central_freq']])
-            data['pa'].append([df.loc[i, 'pa']])
-            data['i'].append([df.loc[i, 'i']])
-            data['w20'].append([df.loc[i, 'w20']])
-
-    data['index'] = len(data['image'])
-    n_empty_cubes = int((1 - prob_galaxy) / prob_galaxy * data['index'])
-
-    # Empty Data
-    counter = 0
-    xyf_max = [x_max - empty_cube_dim[0], y_max - empty_cube_dim[1], f_max - empty_cube_dim[2]]
-    while counter < n_empty_cubes:
-        corner = (np.random.random(3) * xyf_max).astype(np.int32)
-        o_corner = corner + empty_cube_dim
-        segment = segmentmap[corner[0]:o_corner[0], corner[1]:o_corner[1], corner[2]:o_corner[2]].todense()
-        if np.sum(segment) == 0:
-            counter += 1
-            data['image'].append(hi_data[corner[0]:o_corner[0], corner[1]:o_corner[1], corner[2]:o_corner[2]])
-            data['position'].append(np.array([corner, o_corner]))
-
-    data['segmentmap'].append(np.zeros(data['dim']))
-    data['ra'].append([np.nan])
-    data['dec'].append([np.nan])
-    data['hi_size'].append([np.nan])
-    data['line_flux_integral'].append([np.nan])
-    data['central_freq'].append([np.nan])
-    data['pa'].append([np.nan])
-    data['i'].append([np.nan])
-    data['w20'].append([np.nan])
+def append_common_attributes(data: dict, **kwargs):
+    for attr in COMMON_ATTRIBUTES:
+        if attr == 'image':
+            image = get_hi_cube_slice(kwargs['hi_cube_file'], kwargs['slices'])
+            #image_tensor = torch.tensor(image, dtype=torch.float32)
+            data[attr].append(image)
+        elif attr == 'position':
+            position = list(map(lambda s: [s.start, s.stop], kwargs['slices']))
+            position_tensor = torch.tensor(position, dtype=torch.int32).T
+            data[attr].append(position_tensor)
+        else:
+            raise NotImplementedError
     return data
 
 
-def freq_boundary(central_freq, w20):
-    rest_freq = 1.420e9
-    c = 3e5
-    bw = rest_freq * w20 / c
-    upper_freq = central_freq - bw / 2
-    lower_freq = central_freq + bw / 2
-    return lower_freq, upper_freq
+def append_source_attributes(data: dict, row: pd.Series, **kwargs):
+    for attr in SOURCE_ATTRIBUTES:
+        if attr == 'segmentmap':
+            segmentmap_tensor = torch.tensor(kwargs['segmentmap'], dtype=torch.float32)
+            data[attr].append(segmentmap_tensor)
+        elif attr == 'allocated_voxels':
+            voxel_indices = torch.tensor(kwargs['allocation_dict'][row.id], dtype=torch.float32)
+            data[attr].append(voxel_indices - data['position'][-1][0])
+        else:
+            data[attr].append(torch.tensor(row[attr]))
+    return data
 
+
+def add_sources(data: dict, df: pd.DataFrame, hi_cube_file: str, coord_keys: List[str], segmentmap: sparse.COO, allocation_dict: dict,  n_memory_batches: int):
+    max_fetches = int(len(df) / n_memory_batches)
+    min_f0 = 0
+    max_f1 = 0
+    with tqdm(total=len(df)) as pbar:
+        pbar.set_description('Adding source boxes')
+        for i, row in df.iterrows():
+            if row.f1 > max_f1:
+                min_f0 = int(df['f0'].iloc[i:i+max_fetches].min())
+                max_f1 = int(df['f1'].iloc[i:i+max_fetches].max())
+                refetch_hi(hi_cube_file, min_f0, max_f1)
+
+            slices = tuple(map(lambda p: slice(int(row['{}0'.format(p)]), int(row['{}1'.format(p)])), coord_keys))
+
+            if row.id in allocation_dict.keys():
+                data = append_common_attributes(data, hi_cube_file=hi_cube_file, slices=slices)
+                data = append_source_attributes(data, row, segmentmap=segmentmap[slices].todense(), allocation_dict=allocation_dict)
+            
+            pbar.update(1)
+    return data
+
+
+def add_empty(data: dict, hi_cube_file: str, segmentmap: sparse.COO,
+              n_empty_cubes: int, empty_cube_dim: tuple, n_memory_batches: int):    
+    header = fits.getheader(hi_cube_file)
+    
+    cubes_per_batch = int(n_empty_cubes / n_memory_batches)
+    shape = np.fromiter(map(lambda i: header['NAXIS{}'.format(i)], range(1, 4)), dtype=np.int32)
+    shape[-1] = int(shape[-1] / n_memory_batches)
+    with tqdm(total=cubes_per_batch * n_memory_batches) as pbar:
+        pbar.set_description('Adding empty boxes')
+        for i in range(n_memory_batches):
+            min_f0 = int(shape[-1] * i)
+            max_f1 = min_f0 + shape[-1]
+            refetch_hi(hi_cube_file, min_f0, max_f1)
+
+            counter = 0
+            xyf_max = shape - empty_cube_dim
+            while counter < cubes_per_batch:
+                corner = (np.random.random(3) * xyf_max).astype(np.int32)
+
+                corner[-1] += min_f0
+                slices = tuple(starmap(lambda c, d: slice(c, c + d), zip(corner, empty_cube_dim)))
+                segmentmap = segmentmap[slices]
+                if segmentmap.sum() == 0:
+                    counter += 1
+                    pbar.update(1)
+                    data = append_common_attributes(data, hi_cube_file=hi_cube_file, slices=slices)
+    return data
+
+
+def create_datacube_set_dict(df: pd.DataFrame, hi_cube_file: str, segmentmap: sparse.COO, allocation_dict: dict,
+                             prob_galaxy: float, cube_dim: tuple, empty_cube_dim: tuple, n_memory_batches = 20) -> Dict:
+    """
+    :param df: truth catalogue values of the galaxies
+    :param hi_cube_file: filename of H1 data cube
+    :param segmentmap: sparse source map
+    :param wcs: world coordinate system
+    :param prob_galaxy: proportion of data points containing a galaxy
+    :param cube_dim: dimension of SMALL sampling cube (n*m*o)
+    :param empty_cube_dim: dimension of BIG cube to sample from (p*q*r)
+    :return: Dictionary with attribute as key
+    """
+
+    data = dict()
+
+    data['dim'] = cube_dim
+
+    for attr in COMMON_ATTRIBUTES.union(SOURCE_ATTRIBUTES):
+        data[attr] = list()
+
+    coord_keys = ['x', 'y', 'f']
+
+    df = prepare_df(df, hi_cube_file, coord_keys, cube_dim)
+
+    data = add_sources(data, df, hi_cube_file, coord_keys, segmentmap, allocation_dict, n_memory_batches)
+
+    data['index'] = len(data['image'])
+
+    n_empty_cubes = int((1 - prob_galaxy) / prob_galaxy * data['index'])
+
+    data = add_empty(data, hi_cube_file, segmentmap, n_empty_cubes, empty_cube_dim, n_memory_batches)
+
+    for attr in SOURCE_ATTRIBUTES:
+        if attr == 'segmentmap':
+            data['segmentmap'].append(torch.zeros(empty_cube_dim))
+        else:
+            data[attr].append(np.nan)
+
+    return data

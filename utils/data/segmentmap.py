@@ -1,6 +1,7 @@
 import os
 from itertools import starmap
 from typing import Tuple
+import pickle
 
 import pandas as pd
 from sparse import DOK, COO, save_npz, load_npz
@@ -8,7 +9,7 @@ from astropy.io.fits.header import Header
 from astropy.io import fits
 from astropy.wcs import WCS
 import numpy as np
-from skimage import draw, transform
+from skimage import draw
 
 from utils import filename
 from definitions import config, logger
@@ -46,7 +47,7 @@ def dense_cube(row: pd.Series):
     base_ellipse = draw.ellipse(int(square_side / 2), int(square_side / 2), row.major_radius_pixels,
                                 row.minor_radius_pixels, rotation=np.deg2rad(row.pa))
 
-    cross_section[base_ellipse[0], base_ellipse[1]] = 1.
+    cross_section[base_ellipse[0], base_ellipse[1]] = 1
 
     # Only use odd numbers of channels
     n_channels = np.round(row.n_channels).astype(np.int32)
@@ -55,7 +56,7 @@ def dense_cube(row: pd.Series):
     return np.repeat(cross_section[np.newaxis, :, :], n_channels, axis=0).T
 
 
-def get_spans(full_cube_shape: Tuple, small_cube_shape: Tuple, image_coords: pd.Series):
+def get_margins(full_cube_shape: Tuple, small_cube_shape: Tuple, image_coords: pd.Series):
     spans = []
 
     for p, full_length, small_length in zip(image_coords, full_cube_shape, small_cube_shape):
@@ -76,35 +77,69 @@ def get_spans(full_cube_shape: Tuple, small_cube_shape: Tuple, image_coords: pd.
 def create_from_df(df: pd.DataFrame, header: Header):
     cube = DOK(shape=(header['NAXIS1'], header['NAXIS2'], header['NAXIS3']))
 
+    allocation_dict = dict()
+
     for i, row in df.iterrows():
         if row.minor_radius_pixels < config['preprocessing']['min_axis_pixels']:
             continue
 
         small_dense_cube = dense_cube(row)
 
-        spans = get_spans(cube.shape, small_dense_cube.shape, row[['x', 'y', 'z']].astype(np.int32))
+        margins = get_margins(cube.shape, small_dense_cube.shape, row[['x', 'y', 'z']].astype(np.int32))
 
         centers = [int(s / 2) for s in small_dense_cube.shape]
 
-        small_dense_cube = small_dense_cube[tuple(starmap(lambda c, s: slice(c - s[0], c + s[1]), zip(centers, spans)))]
+        small_dense_cube = small_dense_cube[
+            tuple(starmap(lambda c, s: slice(c - s[0], c + s[1]), zip(centers, margins)))]
+
+        allocations = np.argwhere(small_dense_cube == 1)
+        allocations += row[['x', 'y', 'z']].astype(np.int32) - np.fromiter(map(lambda m: m[0], margins), dtype=np.int32)
+
+        allocation_dict[row.id] = allocations
 
         cube[tuple(starmap(lambda c, s: slice(c - s[0], c + s[1]),
-                           zip(row[['x', 'y', 'z']].astype(np.int32), spans)))] = small_dense_cube
+                           zip(row[['x', 'y', 'z']].astype(np.int32), margins)))] = small_dense_cube
 
-    return COO(cube)
+    return COO(cube), allocation_dict
 
 
-def create_from_files(file_type: str, save_to_disk=True, regenerate=False):
-    fname = filename.processed.segmentmap(file_type)
-    if os.path.exists(fname) and not regenerate:
-        cube = load_npz(fname)
+def from_processed(file_type: str):
+    cube = None
+    allocation_dict = None
+
+    segmap_fname = filename.processed.segmentmap(file_type)
+    if os.path.exists(segmap_fname):
+        cube = load_npz(segmap_fname)
         logger.info('Loaded segmentmap from disk')
-    else:
+
+    allocation_dict_fname = filename.processed.allocation_dict(file_type)
+    if os.path.exists(allocation_dict_fname):
+        with open(allocation_dict_fname, 'rb') as f:
+            allocation_dict = pickle.load(f)
+
+    return cube, allocation_dict
+
+
+def save_to_processed(file_type, cube, allocation_dict):
+    segmap_fname = filename.processed.segmentmap(file_type)
+    save_npz(segmap_fname, cube)
+
+    allocation_dict_fname = filename.processed.allocation_dict(file_type)
+    with open(allocation_dict_fname, 'wb') as f:
+        pickle.dump(allocation_dict, f)
+
+
+def create_from_files(file_type: str, regenerate=False, save_to_disk=True):
+    cube, allocation_dict = None, None
+    if not regenerate:
+        cube, allocation_dict = from_processed(file_type)
+    if cube is None or allocation_dict is None:
         logger.info('Computing segmentmap from truth catalogue...')
         df = pd.read_csv(filename.data.true(file_type), sep=' ')
         header = fits.getheader(filename.data.sky(file_type))
         df = prepare_df(df, header)
-        cube = create_from_df(df, header)
+        cube, allocation_dict = create_from_df(df, header)
         if save_to_disk:
-            save_npz(fname, cube)
-    return cube
+            save_to_processed(file_type, cube, allocation_dict)
+
+    return cube, allocation_dict
