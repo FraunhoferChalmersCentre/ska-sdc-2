@@ -42,6 +42,7 @@ class AbstractSKADataset(Dataset):
     def __getitem__(self, item) -> dict:
         raise NotImplementedError
 
+
 class BaseSKADataSet(AbstractSKADataset):
     def __getitem__(self, item):
         if isinstance(item, slice):
@@ -52,10 +53,12 @@ class BaseSKADataSet(AbstractSKADataset):
             shape = self.get_attribute('image')[item].size()
             
             slices = [slice(None)] * len(shape)
+            position = self.get_attribute('allocated_voxels')[item][
+                np.random.choice(self.get_attribute('allocated_voxels')[item].shape[0])]
             
             dim = self.get_attribute('dim').astype(np.int32)
             randoms = self.get_randomizer().random(len(dim), item)
-            slices[-len(dim):] = [slice(int(r * (s - d)), int(r * (s - d)) + d) for s, d, r in zip(shape[-len(dim):], dim, randoms)]
+            slices[-len(dim):] = [slice(int(p - r * d), int(p - r * d) + d) for p, d, r in zip(position, dim, randoms)]
 
             get_item = dict()
             get_item['image'] = self.get_attribute('image')[item][slices]
@@ -72,7 +75,7 @@ class BaseSKADataSet(AbstractSKADataset):
 
 
 class SKADataSet(BaseSKADataSet):
-    def __init__(self, attributes: dict, random_type: Union[int, bool] = True, source_keys: list = None,
+    def __init__(self, attributes: dict, random_type: Union[int, None] = None, source_keys: list = None,
                  empty_keys: list = None):
 
         self.data = attributes
@@ -143,7 +146,7 @@ class SKADataSet(BaseSKADataSet):
 class StaticSKATransformationDecorator(BaseSKADataSet):
 
     def __init__(self, transformed_keys: Union[List[str], str], transform: Callable, decorated: AbstractSKADataset):
-        self.decorated = decorated.clone()
+        self.decorated = decorated
         self.transformed_data = self._transform_attributes(transform, transformed_keys)
 
     def _transform_attributes(self, transform, transformed_keys):
@@ -240,17 +243,14 @@ class DynamicSKATransformationDecorator(AbstractSKADataset, ABC):
 
 class Randomizer:
 
-    def __init__(self, rtype: Union[int, bool] = True):
+    def __init__(self, rtype: Union[int, None] = None):
         self.rtype = rtype
 
     def random(self, size, seed=None):
-        if not isinstance(self.rtype, bool):
+        if isinstance(self.rtype, int):
             if seed is None:
                 np.random.seed(self.rtype)
             else:
-                np.random.seed(seed)
-        if not isinstance(self.rtype, bool) or self.rtype:
-            rand = np.random.random(size)
-        else:
-            rand = np.ones(size) * 0.5
+                np.random.seed(self.rtype + seed)
+        rand = np.random.random(size)
         return rand
