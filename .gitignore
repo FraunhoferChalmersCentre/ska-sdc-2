@@ -149,6 +149,6 @@ cython_debug/
 /processed/
 /runs/*
 */runs/
-/notebooks/tb_logs/
+tb_logs/
 
 scratch.py

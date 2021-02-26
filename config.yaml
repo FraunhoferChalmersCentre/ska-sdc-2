@@ -1,7 +1,7 @@
 # Ensure very large files can be stored in these paths
 # dot (.) means project directory
 path:
-  data: ~/project/data/
+  data: ./data/
   processed: ./processed/
 
 preprocessing:

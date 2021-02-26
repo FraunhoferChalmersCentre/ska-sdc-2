@@ -11,9 +11,9 @@ do
     esac
 done
 
-if [ ! -d ~/project ]
+if [ ! -d ~/ska-sdc-2/data ]
 then
-	ln -s /project/sm47 project
+	ln -s /project/sm47/data ~/ska-sdc-2/data
 fi
 
 module load daint-gpu
