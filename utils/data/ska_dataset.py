@@ -44,6 +44,17 @@ class AbstractSKADataset(Dataset):
 
 
 class BaseSKADataSet(AbstractSKADataset):
+    @staticmethod
+    def _inside_cube(pos, random, dim_s, dim_l):
+        if pos - dim_s < 0:
+            start = int(pos - random * pos)
+        elif pos + dim_s > dim_l:
+            start = int(pos - dim_s + random * (dim_l - pos))
+        else:
+            start = int(pos - random * dim_s)
+        end = int(start + dim_s)
+        return start, end
+
     def __getitem__(self, item):
         if isinstance(item, slice):
             raise NotImplementedError('Not implemented slice items')
@@ -51,22 +62,28 @@ class BaseSKADataSet(AbstractSKADataset):
             raise NotImplementedError('Not implemented tuple items')
         else:
             shape = self.get_attribute('image')[item].size()
-            
+
             slices = [slice(None)] * len(shape)
-            position = self.get_attribute('allocated_voxels')[item][
-                np.random.choice(self.get_attribute('allocated_voxels')[item].shape[0])]
-            
-            dim = self.get_attribute('dim').astype(np.int32)
+
+            dim = self.get_attribute('dim')
+            item = item % self.__len__()
             randoms = self.get_randomizer().random(len(dim), item)
-            slices[-len(dim):] = [slice(int(p - r * d), int(p - r * d) + d) for p, d, r in zip(position, dim, randoms)]
 
             get_item = dict()
-            get_item['image'] = self.get_attribute('image')[item][slices]
-            
+
             if item < self.get_attribute('index'):
+                pos_index = int(
+                    self.get_attribute('allocated_voxels')[item].shape[0] * self.get_randomizer().random(1, item))
+                position = self.get_attribute('allocated_voxels')[item][pos_index]
+                slices[-len(dim):] = [slice(*BaseSKADataSet._inside_cube(p, r, d, s)) for s, p, d, r in
+                                      zip(shape[-len(dim):], position, dim, randoms)]
+                get_item['image'] = self.get_attribute('image')[item][slices]
                 get_item['segmentmap'] = self.get_attribute('segmentmap')[item][slices]
                 get_item.update({k: self.get_attribute(k)[item] for k in self.get_soruce_keys()})
             else:
+                slices[-len(dim):] = [slice(int(r * (s - d)), int(r * (s - d)) + d) for s, d, r in
+                                      zip(shape[-len(dim):], dim, randoms)]
+                get_item['image'] = self.get_attribute('image')[item][slices]
                 get_item['segmentmap'] = self.get_attribute('segmentmap')[self.get_attribute('index')]
                 get_item.update({k: self.get_attribute(k)[item] for k in self.get_common_keys()})
                 get_item.update(
@@ -91,7 +108,8 @@ class SKADataSet(BaseSKADataSet):
 
         # Key Handling
         if source_keys is None:
-            self.source_keys = [k for k in list(self.get_keys()) if k not in ['index', 'dim', 'image', 'segmentmap']]
+            self.source_keys = [k for k in list(self.get_keys()) if k not in ['index', 'dim', 'image', 'segmentmap',
+                                                                              'allocated_voxels']]
         if empty_keys is None:
             self.empty_keys = ['position']
         self.common_keys = list(set.intersection(set(self.source_keys), set(self.empty_keys)))
