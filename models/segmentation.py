@@ -1,4 +1,5 @@
 from typing import Any
+from itertools import starmap
 
 import pytorch_lightning as pl
 from pytorch_lightning import loggers
@@ -41,7 +42,7 @@ METRICS = {
 
 class Segmenter(pl.LightningModule):
     def __init__(self, model: nn.Module, loss_fct: Any, training_set: AbstractSKADataset,
-                 validation_set: AbstractSKADataset, logger: pl.loggers.TensorBoardLogger, batch_size=32, x_key='image',
+                 validation_set: AbstractSKADataset, logger: pl.loggers.TensorBoardLogger, batch_size=128, x_key='image',
                  y_key='segmentmap', vis_max_angle=180, vis_rotations=4):
         super().__init__()
         self.logger = logger
@@ -55,11 +56,24 @@ class Segmenter(pl.LightningModule):
         self.vis_rotations = vis_rotations
         self.vis_max_angle = vis_max_angle
 
-        # TODO: how to select visualized id?
-        self.vis_ids = [0]
-        for id in self.vis_ids:
-            self._log_cross_sections(self.validation_set[id][self.x_key], self.validation_set[id]['pa'], self.x_key)
-            self._log_cross_sections(self.validation_set[id][self.y_key], self.validation_set[id]['pa'], self.y_key)
+        self.vis_id = int(torch.argmax(torch.tensor(self.validation_set.get_attribute('line_flux_integral')[:-1])))
+        self.log_image()
+        
+    def log_image(self):
+        image = self.validation_set.get_attribute(self.x_key)[self.vis_id].squeeze()
+        slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d / 2),int(s / 2 - d / 2) + d), zip(image.shape, self.validation_set.get_attribute('dim'))))
+        self._log_cross_sections(image[slices], self.validation_set[self.vis_id]['pa'], self.x_key)
+        segmap = self.validation_set.get_attribute(self.y_key)[self.vis_id].squeeze()
+        if segmap.sum() == 0:
+            raise ValueError('Logged segmentmap contains no source voxels. Reshuffle!')
+        self._log_cross_sections(segmap[slices], self.validation_set[self.vis_id]['pa'], self.y_key)
+    
+    def log_prediction_image(self):
+        image = self.validation_set.get_attribute(self.x_key)[self.vis_id].squeeze()
+        slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d / 2),int(s / 2 - d / 2) + d), zip(image.shape, self.validation_set.get_attribute('dim'))))
+        input_image = image[slices].unsqueeze(0).unsqueeze(0).to(self.device)
+        prediction = nn.Sigmoid()(self.model(input_image)).squeeze()
+        self._log_cross_sections(prediction, self.validation_set[self.vis_id]['pa'], 'Prediction')
 
     def _log_cross_sections(self, cube: torch.Tensor, pa: float, tag: str):
         for i in range(self.vis_rotations):
@@ -71,7 +85,7 @@ class Segmenter(pl.LightningModule):
 
             center = int(cropped_side / 2)
             log_tag = tag + '/{:.1f}'.format(i * self.vis_max_angle / self.vis_rotations)
-            self.logger.experiment.add_image(log_tag, cropped[:, :, center].unsqueeze(0), self.current_epoch)
+            self.logger.experiment.add_image(log_tag, cropped[:, center, :].unsqueeze(0), self.current_epoch)
 
     def training_step(self, batch, batch_idx):
         # training_step defined the train loop.
@@ -81,19 +95,18 @@ class Segmenter(pl.LightningModule):
         loss = self.loss_fct(y_hat, y)
         # Logging to TensorBoard by default
         self.log('train_loss', loss, on_step=False, on_epoch=True, sync_dist=True)
+        
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch[self.x_key], batch[self.y_key]
         y_hat = self.model(x)
-        for id in self.vis_ids:
-            self._log_cross_sections(nn.Sigmoid()(y_hat[id]), self.validation_set[id]['pa'], 'prediction')
-
         loss = self.loss_fct(y_hat, y)
         # Logging to TensorBoard by default
         self.log('validation_loss', loss, on_step=False, on_epoch=True, sync_dist=True)
         for metric, f in METRICS.items():
             self.log(metric, f(y_hat, y), on_step=False, on_epoch=True, sync_dist=True)
+        self.log_prediction_image()
 
     def train_dataloader(self):
         return DataLoader(self.training_set, batch_size=self.batch_size, shuffle=True)
