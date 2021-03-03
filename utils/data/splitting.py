@@ -1,7 +1,10 @@
-import numpy as np
 from typing import Dict, Tuple, List
-from utils.data.ska_dataset import SKADataSet, StaticSKATransformationDecorator
+
+import numpy as np
 import torch
+
+from utils.data.ska_dataset import SKADataSet, StaticSKATransformationDecorator
+from utils.data.generating import COMMON_ATTRIBUTES, SOURCE_ATTRIBUTES
 
 
 def to_float(tensors: List[torch.Tensor]): return list(map(lambda t: t.float(), tensors))
@@ -48,7 +51,49 @@ def add_transforms(base_dataset):
     return base_dataset
 
 
-def splitted_loaders(dataset: Dict, train_fraction: float, required_attrs: List[str] = ['image', 'position']):
+    
+
+def merge(*datasets: Dict):
+    merged = dict()
+    index = 0
+    
+    for d in datasets:
+        index += d['index']
+    
+    merged['index'] = index
+    
+    # Add source boxes
+    for d in datasets:
+        for k, v in d.items():
+            if k == 'index':
+                continue
+            elif k == 'dim':
+                if k not in merged.keys():
+                    merged[k] = v
+            else:
+                if k not in merged.keys():
+                    merged[k] = list()
+
+                merged[k].extend(v[:d['index']])
+    
+    # Add empty boxes common attributes
+    for d in datasets:
+        for k, v in d.items():
+            if k in COMMON_ATTRIBUTES:
+                merged[k].extend(v[d['index']:])
+    
+    # Add dummy values for empty boxes
+    # Assumed that datasets[0] has no empty boxes
+    for k, v in datasets[0].items():
+        if k in SOURCE_ATTRIBUTES:
+            merged[k].append(v[-1])
+        
+    
+    return merged
+    
+    
+
+def train_val_split(dataset: Dict, train_fraction: float, required_attrs: List[str] = ['image', 'position']):
     train, validation = split(dataset, train_fraction, required_attrs)
     datsets = (SKADataSet(train), SKADataSet(validation, random_type=1))
 

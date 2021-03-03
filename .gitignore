@@ -145,8 +145,8 @@ cython_debug/
 *.csv
 *.npz
 
-/data/
-/processed/
+data
+processed
 /runs/*
 */runs/
 tb_logs/
