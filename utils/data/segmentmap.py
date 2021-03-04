@@ -136,7 +136,7 @@ def create_from_files(file_type: str, regenerate=False, save_to_disk=True):
     if cube is None or allocation_dict is None:
         logger.info('Computing segmentmap from truth catalogue...')
         df = pd.read_csv(filename.data.true(file_type), sep=' ')
-        header = fits.getheader(filename.data.sky(file_type))
+        header = fits.getheader(filename.data.sky(file_type), ignore_blank=True)
         df = prepare_df(df, header)
         cube, allocation_dict = create_from_df(df, header)
         if save_to_disk:

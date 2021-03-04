@@ -8,7 +8,7 @@ from astropy.wcs import WCS
 from astropy.io import fits
 import sparse
 import torch
-from tqdm import tqdm_notebook as tqdm
+from tqdm.notebook import tqdm
 
 # attributes for the dataset generally
 GLOBAL_ATTRIBUTES = {'dim', 'index'}
@@ -33,7 +33,7 @@ f0 = None
 def cache_hi_cube(hi_cube_file, min_f0, max_f1):
     global hi_cube_tensor, f0
     f0 = min_f0
-    hi_data_fits = fits.getdata(hi_cube_file)
+    hi_data_fits = fits.getdata(hi_cube_file, ignore_blank=True)
     hi_cube_tensor = torch.tensor(hi_data_fits[min_f0:max_f1].astype(np.float32), dtype=torch.float32).T
 
 
@@ -54,7 +54,7 @@ def freq_boundary(central_freq, w20):
 
 
 def prepare_df(df: pd.DataFrame, hi_cube_file: str, coord_keys: List[str], cube_dim: tuple):
-    header = fits.getheader(hi_cube_file)
+    header = fits.getheader(hi_cube_file, ignore_blank=True)
     wcs = WCS(header)
 
     df[coord_keys] = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0).astype(np.int32)
@@ -148,7 +148,7 @@ def append_source_attributes(data: dict, row: pd.Series, **kwargs):
 
 
 def get_hi_shape(hi_cube_file: str):
-    header = fits.getheader(hi_cube_file)
+    header = fits.getheader(hi_cube_file, ignore_blank=True)
     return np.fromiter(map(lambda i: header['NAXIS{}'.format(i)], range(1, 4)), dtype=np.int32)
 
 
@@ -211,8 +211,9 @@ def add_empty_boxes(data: dict, hi_shape: np.ndarray, segmentmap: sparse.COO,
     return data
 
 
-def create_datacube_set_dict(df: pd.DataFrame, hi_cube_file: str, segmentmap: sparse.COO, allocation_dict: dict,
-                             prob_galaxy: float, cube_dim: tuple, empty_cube_dim: tuple, n_memory_batches=20) -> Dict:
+def split_by_size(df: pd.DataFrame, hi_cube_file: str, segmentmap: sparse.COO, allocation_dict: dict,
+                             prob_galaxy: float, cube_dim: tuple, empty_cube_dim: tuple, n_memory_batches=20, splitsize=60):
+    
     """
     :param df: truth catalogue values of the galaxies
     :param hi_cube_file: filename of H1 data cube
@@ -223,7 +224,7 @@ def create_datacube_set_dict(df: pd.DataFrame, hi_cube_file: str, segmentmap: sp
     :param empty_cube_dim: dimension of BIG cube to sample from (p*q*r)
     :return: Dictionary with attribute as key
     """
-
+    
     source_dict, empty_dict = prepare_dicts(dim=cube_dim)
     coord_keys = ['x', 'y', 'f']
 
@@ -231,7 +232,46 @@ def create_datacube_set_dict(df: pd.DataFrame, hi_cube_file: str, segmentmap: sp
 
     source_dict, empty_dict = add_boxes(source_dict, empty_dict, df, hi_cube_file, coord_keys, segmentmap,
                                         allocation_dict, n_memory_batches, prob_galaxy, empty_cube_dim)
-
-    merged_dict = merge_dict(source_dict, empty_dict, cube_dim=cube_dim)
-
-    return merged_dict
+    
+    n_splits = int((len(source_dict['image']) + len(empty_dict['image'])) / splitsize)
+    
+    # Init splitted source dicts
+    splitted_source_dicts = [dict() for s in range(n_splits)]
+    for source_split in splitted_source_dicts:
+        for k in SOURCE_ATTRIBUTES.union(COMMON_ATTRIBUTES):
+            source_split[k] = list()
+        for k in GLOBAL_ATTRIBUTES:
+            source_split[k] = source_dict[k]
+    
+    # Move source boxes to splitted source dicts
+    for k in source_dict.keys():
+        if k in GLOBAL_ATTRIBUTES:
+            continue
+            
+        for i in range(len(source_dict[k])):
+            item = source_dict[k].pop(-1)
+            splitted_source_dicts[i % len(splitted_source_dicts)][k].append(item.clone())
+    
+    for source_split in splitted_source_dicts:
+        source_split['index'] = len(source_split['image'])
+    
+    # Init splitted empty dicts
+    splitted_empty_dicts = [dict() for s in range(n_splits)]
+    for empty_split in splitted_empty_dicts:
+        for k in COMMON_ATTRIBUTES:
+            empty_split[k] = list()
+    
+    # Move source boxes to splitted source dicts
+    for k in empty_dict.keys():
+        if k in GLOBAL_ATTRIBUTES:
+            continue
+        
+        for i in range(len(empty_dict[k])):
+            item = empty_dict[k].pop(-1)
+            splitted_empty_dicts[i % len(splitted_empty_dicts)][k].append(item.clone())
+            
+    merged_dicts = []
+    for source, empty in zip(splitted_source_dicts, splitted_empty_dicts):
+        merged_dicts.append(merge_dict(source, empty, cube_dim=cube_dim))
+    
+    return merged_dicts

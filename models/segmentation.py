@@ -12,38 +12,29 @@ from pytorch_toolbelt import losses
 
 from utils.data.ska_dataset import AbstractSKADataset
 
-
-def jaccard(y_hat, y):
-    y_hat, y = torch.round(nn.Sigmoid()(y_hat).flatten()), torch.round(y.flatten())
-    intersection = torch.sum(y_hat * y)
-    union = y.sum() + y_hat.sum() - intersection
-    if union < 1.:
-        return torch.tensor(1.)
-    return intersection / union
-
-
-def dice(y_hat, y):
-    y_hat, y = torch.round(nn.Sigmoid()(y_hat).flatten()), torch.round(y.flatten())
-    intersection = torch.sum(y_hat * y)
-    denom = y.sum() + y_hat.sum()
-    if denom < 1.:
-        return torch.tensor(1.)
-    return 2 * intersection / denom
-
-
-METRICS = {
-    'Soft dice': losses.DiceLoss(mode='binary'),
-    'Soft Jaccard': losses.JaccardLoss(mode='binary'),
-    'Lovasz hinge': losses.BinaryLovaszLoss(),
-    'Jaccard': jaccard,
-    'Dice': dice
-}
-
+def get_vis_id(dataset, shape, min_allocated):
+    vis_id = None
+    
+    pos = dataset.get_attribute('position')
+    alloc = dataset.get_attribute('allocated_voxels')
+    while vis_id is None:
+        random_id = np.random.randint(0, dataset.get_attribute('index'))
+        candidate = True
+        for r in pos[random_id].squeeze():
+            
+            for c, s in zip(r, shape):
+                if torch.eq(c, 0) or torch.eq(c, s):
+                    candidate = False
+        
+        if candidate and alloc[random_id].shape[0] > min_allocated:
+            vis_id = random_id
+    
+    return vis_id
 
 class Segmenter(pl.LightningModule):
     def __init__(self, model: nn.Module, loss_fct: Any, training_set: AbstractSKADataset,
                  validation_set: AbstractSKADataset, logger: pl.loggers.TensorBoardLogger, batch_size=128, x_key='image',
-                 y_key='segmentmap', vis_max_angle=180, vis_rotations=4):
+                 y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold = None):
         super().__init__()
         self.logger = logger
         self.batch_size = batch_size
@@ -56,8 +47,44 @@ class Segmenter(pl.LightningModule):
         self.vis_rotations = vis_rotations
         self.vis_max_angle = vis_max_angle
 
-        self.vis_id = int(torch.argmax(torch.tensor(self.validation_set.get_attribute('line_flux_integral')[:-1])))
+        self.vis_id = vis_id
+        self.threshold = threshold
         self.log_image()
+        
+        self.metrics = {
+            'Soft dice': losses.DiceLoss(mode='binary'),
+            'Soft Jaccard': losses.JaccardLoss(mode='binary'),
+            'Lovasz hinge': losses.BinaryLovaszLoss(),
+            'Jaccard': self.jaccard,
+            'Dice': self.dice,
+            'Cross Entropy': self.bce_loss
+        }
+        
+    def jaccard(self, y_hat, y):
+        y_hat = torch.where(nn.Sigmoid()(y_hat).flatten() > self.threshold, 1, 0)
+        y = torch.round(y.flatten())
+        intersection = torch.sum(y_hat * y)
+
+        union = y.sum() + y_hat.sum() - intersection
+        print(intersection, y_hat.sum(), y.sum())
+        if union < 1.:
+            return torch.tensor(1.)
+        return intersection / union
+
+
+    def dice(self, y_hat, y):
+        y_hat = torch.where(nn.Sigmoid()(y_hat).flatten() > self.threshold, 1, 0)
+        y = torch.round(y.flatten())
+        intersection = torch.sum(y_hat * y)
+        denom = y.sum() + y_hat.sum()
+        if denom < 1.:
+            return torch.tensor(1.)
+        return 2 * intersection / denom
+
+    def bce_loss(self, y_hat, y):
+        yf = y.flatten()
+        y_hatf = y_hat.flatten()
+        return nn.BCEWithLogitsLoss()(y_hatf, yf)
         
     def log_image(self):
         image = self.validation_set.get_attribute(self.x_key)[self.vis_id].squeeze()
@@ -85,7 +112,7 @@ class Segmenter(pl.LightningModule):
 
             center = int(cropped_side / 2)
             log_tag = tag + '/{:.1f}'.format(i * self.vis_max_angle / self.vis_rotations)
-            self.logger.experiment.add_image(log_tag, cropped[:, center, :].unsqueeze(0), self.current_epoch)
+            self.logger.experiment.add_image(log_tag, cropped[:, :, center].unsqueeze(0), self.global_step)
 
     def training_step(self, batch, batch_idx):
         # training_step defined the train loop.
@@ -94,7 +121,7 @@ class Segmenter(pl.LightningModule):
         y_hat = self.model(x)
         loss = self.loss_fct(y_hat, y)
         # Logging to TensorBoard by default
-        self.log('train_loss', loss, on_step=False, on_epoch=True, sync_dist=True)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, sync_dist=True, logger=True)
         
         return loss
 
@@ -103,16 +130,16 @@ class Segmenter(pl.LightningModule):
         y_hat = self.model(x)
         loss = self.loss_fct(y_hat, y)
         # Logging to TensorBoard by default
-        self.log('validation_loss', loss, on_step=False, on_epoch=True, sync_dist=True)
-        for metric, f in METRICS.items():
-            self.log(metric, f(y_hat, y), on_step=False, on_epoch=True, sync_dist=True)
+        #self.log('validation_loss', loss, on_step=False, on_epoch=True, sync_dist=True)
+        for metric, f in self.metrics.items():
+            self.log(metric, f(y_hat, y), on_step=True, on_epoch=True, sync_dist=True)
         self.log_prediction_image()
 
     def train_dataloader(self):
         return DataLoader(self.training_set, batch_size=self.batch_size, shuffle=True)
 
     def val_dataloader(self):
-        return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=False)
+        return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=True)
 
     def forward(self, x):
         return self.model(x)

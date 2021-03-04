@@ -14,6 +14,8 @@ done
 if [ ! -d ~/ska-sdc-2/data ]
 then
 	ln -s /project/sm47/data ~/ska-sdc-2/data
+    mkdir $SCRATCH/processed
+    ln -s $SCRATCH/processed ~/ska-sdc-2/processed
 fi
 
 module load daint-gpu
