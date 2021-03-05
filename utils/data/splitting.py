@@ -23,7 +23,7 @@ def fill_dict(units: np.ndarray, dataset: Dict[str, np.ndarray], required_attrs:
         
         split_dict[k] = list()
         for i in units:
-            if k not in required_attrs and i > dataset['index']:
+            if k not in required_attrs and i >= dataset['index']:
                 continue
             split_dict[k].append(v[i])
             

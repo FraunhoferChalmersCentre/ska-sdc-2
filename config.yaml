@@ -3,6 +3,7 @@
 path:
   data: ./data/
   processed: ./processed/
+  models: ./saved_models/
 
 preprocessing:
   min_axis_pixels: 0.5 # minimum size of minor axis in pixels to be used for training

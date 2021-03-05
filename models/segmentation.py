@@ -5,12 +5,26 @@ import pytorch_lightning as pl
 from pytorch_lightning import loggers
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Sampler
 import torchvision.transforms.functional as TF
 import numpy as np
 from pytorch_toolbelt import losses
+import matplotlib.pyplot as plt
 
 from utils.data.ska_dataset import AbstractSKADataset
+
+class SortedSampler(Sampler):
+    def __init__(self, dataset: AbstractSKADataset):
+        allocations = list(starmap(lambda i, t: (i, len(t)), enumerate(dataset.get_attribute('allocated_voxels')[:-1])))
+        self.sorted_indices = list(range(dataset.get_attribute('index'), len(dataset))) +  list(map(lambda i: i[0], sorted(allocations, key=lambda a: a[1])))
+        
+    
+    def __len__(self):
+        return len(self.sorted_indices)
+    
+    def __iter__(self):
+        return iter(self.sorted_indices)
+
 
 def get_vis_id(dataset, shape, min_allocated):
     vis_id = None
@@ -31,10 +45,14 @@ def get_vis_id(dataset, shape, min_allocated):
     
     return vis_id
 
+def batch_by_allocation(dataset: AbstractSKADataset, batches: int):
+    allocations = list(map(len, dataset.get_attribute('allocated_pixels')))
+    
+
 class Segmenter(pl.LightningModule):
     def __init__(self, model: nn.Module, loss_fct: Any, training_set: AbstractSKADataset,
                  validation_set: AbstractSKADataset, logger: pl.loggers.TensorBoardLogger, batch_size=128, x_key='image',
-                 y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold = None):
+                 y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold = None, lr=1e-3):
         super().__init__()
         self.logger = logger
         self.batch_size = batch_size
@@ -46,45 +64,106 @@ class Segmenter(pl.LightningModule):
         self.model = model
         self.vis_rotations = vis_rotations
         self.vis_max_angle = vis_max_angle
+        self.lr = lr
 
         self.vis_id = vis_id
         self.threshold = threshold
         self.log_image()
         
+        self.tp_sum = torch.tensor(0.)
+        self.fp_sum = torch.tensor(0.)
+        self.fn_sum = torch.tensor(0.)
+        self.tn_sum = torch.tensor(0.)
+        
         self.metrics = {
             'Soft dice': losses.DiceLoss(mode='binary'),
             'Soft Jaccard': losses.JaccardLoss(mode='binary'),
             'Lovasz hinge': losses.BinaryLovaszLoss(),
-            'Jaccard': self.jaccard,
-            'Dice': self.dice,
-            'Cross Entropy': self.bce_loss
+            'Cross Entropy': losses.SoftBCEWithLogitsLoss(),
+            'TP': self.tp,
+            'FP': self.fp,
+            'FN': self.fn,
+            'TN': self.tn
         }
         
-    def jaccard(self, y_hat, y):
-        y_hat = torch.where(nn.Sigmoid()(y_hat).flatten() > self.threshold, 1, 0)
-        y = torch.round(y.flatten())
-        intersection = torch.sum(y_hat * y)
+        self.derivatives = {
+            'Jaccard': self.jaccard,
+            'Dice': self.dice,
+            'Specificity': self.specificity,
+            'Precision': self.precision_metric,
+            'Sensitivity': self.sensitivity
+        }
+    
+    def rounded(self, prediction, truth):
+        prediction = torch.where(nn.Sigmoid()(prediction).flatten() > self.threshold, 1, 0)
+        truth = truth.flatten().round()
+        return prediction, truth
+    
+    def reset_metrics(self):
+        self.tp_sum = torch.tensor(0.).to(self.device)
+        self.fp_sum = torch.tensor(0.).to(self.device)
+        self.fn_sum = torch.tensor(0.).to(self.device)
+        self.tn_sum = torch.tensor(0.).to(self.device)
+    
+    def port_metrics(self):
+        self.tp_sum = self.tp_sum.to(self.device)
+        self.fp_sum = self.fp_sum.to(self.device)
+        self.fn_sum = self.fn_sum.to(self.device)
+        self.tn_sum = self.tn_sum.to(self.device)
+    
+    def tp(self, prediction, truth):
+        prediction, truth = self.rounded(prediction, truth)
+        current_tp = (prediction * truth).sum()
+        self.tp_sum += current_tp
+        return current_tp
 
-        union = y.sum() + y_hat.sum() - intersection
-        print(intersection, y_hat.sum(), y.sum())
-        if union < 1.:
-            return torch.tensor(1.)
-        return intersection / union
+    def fp(self, prediction, truth):
+        prediction, truth = self.rounded(prediction, truth)
+        current_fp = torch.sum(torch.logical_xor(prediction, truth) * prediction)
+        self.fp_sum += current_fp
+        return current_fp
 
+    def fn(self, prediction, truth):
+        prediction, truth = self.rounded(prediction, truth)
+        current_fn = torch.sum(torch.logical_xor(prediction, truth) * torch.logical_not(prediction))
+        self.fn_sum += current_fn
+        return current_fn
 
-    def dice(self, y_hat, y):
-        y_hat = torch.where(nn.Sigmoid()(y_hat).flatten() > self.threshold, 1, 0)
-        y = torch.round(y.flatten())
-        intersection = torch.sum(y_hat * y)
-        denom = y.sum() + y_hat.sum()
-        if denom < 1.:
-            return torch.tensor(1.)
-        return 2 * intersection / denom
+    def tn(self, prediction, truth):
+        prediction, truth = self.rounded(prediction, truth)
+        current_tn = torch.sum(torch.logical_not(prediction) * torch.logical_not(truth))
+        self.tn_sum += current_tn
+        return current_tn
+        
+    def jaccard(self):
+        denom = self.tp_sum + self.fp_sum + self.fn_sum
+        if torch.eq(denom, 0):
+            return torch.tensor(0)
+        return self.tp_sum / denom
 
-    def bce_loss(self, y_hat, y):
-        yf = y.flatten()
-        y_hatf = y_hat.flatten()
-        return nn.BCEWithLogitsLoss()(y_hatf, yf)
+    def dice(self):
+        denom = 2 * self.tp_sum + self.fp_sum + self.fn_sum
+        if torch.eq(denom, 0):
+            return torch.tensor(0)
+        return 2 * self.tp_sum / denom
+    
+    def sensitivity(self):
+        denom = self.tp_sum + self.fn_sum
+        if torch.eq(denom, 0):
+            return torch.tensor(0)
+        return self.tp_sum / denom 
+    
+    def specificity(self):
+        denom = self.tn_sum + self.fp_sum
+        if torch.eq(denom, 0):
+            return torch.tensor(0)
+        return self.tn_sum / denom 
+    
+    def precision_metric(self):
+        denom = self.tp_sum + self.fp_sum
+        if torch.eq(denom, 0):
+            return torch.tensor(0)
+        return self.tp_sum / denom 
         
     def log_image(self):
         image = self.validation_set.get_attribute(self.x_key)[self.vis_id].squeeze()
@@ -126,24 +205,30 @@ class Segmenter(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
+        self.port_metrics()
         x, y = batch[self.x_key], batch[self.y_key]
         y_hat = self.model(x)
-        loss = self.loss_fct(y_hat, y)
-        # Logging to TensorBoard by default
-        #self.log('validation_loss', loss, on_step=False, on_epoch=True, sync_dist=True)
         for metric, f in self.metrics.items():
             self.log(metric, f(y_hat, y), on_step=True, on_epoch=True, sync_dist=True)
+        return self.loss_fct(y_hat, y)
+        
+         
+    def validation_epoch_end(self, outputs):
+        for metric, f in self.derivatives.items():
+            self.log(metric, f(), on_step=False, on_epoch=True, sync_dist=True)
         self.log_prediction_image()
+        self.reset_metrics()
+        
 
     def train_dataloader(self):
         return DataLoader(self.training_set, batch_size=self.batch_size, shuffle=True)
 
     def val_dataloader(self):
-        return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=True)
+        return DataLoader(self.validation_set, batch_size=self.batch_size, sampler=SortedSampler(self.validation_set))
 
     def forward(self, x):
         return self.model(x)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-2)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer

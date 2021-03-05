@@ -25,7 +25,19 @@ def power_transform(t: np.ndarray, base=100, percentile=99.9):
     return t
 
 
-transforms = {'power': power_transform}
+def minmax_transform(t: np.ndarray):
+    with tqdm(total=t.shape[0]) as pbar:
+        pbar.set_description('Apply power transform')
+        for i in range(t.shape[0]):
+            pbar.update(1)
+            lower = np.percentile(t[i], .1)
+            upper = np.percentile(t[i], 99.9)
+            t[i] = np.clip(t[i], lower, upper)
+            t[i] = (t[i] - lower) / (upper  - lower)
+    return t
+
+
+transforms = {'power': power_transform, 'minmax': minmax_transform}
 types = ['dev_s', 'dev_l', 'eval']
 parser = argparse.ArgumentParser()
 parser.add_argument('--type', metavar='T', nargs='*', default=transforms.keys(),  help='type of transform to apply ({})'.format(','.join(transforms.keys())))
