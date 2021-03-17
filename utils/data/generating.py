@@ -69,9 +69,9 @@ def prepare_df(df: pd.DataFrame, hi_cube_file: str, coord_keys: List[str], cube_
     major_radius_pixels = np.ceil(df['hi_size'] / (pixel_width_arcsec * 2)).astype(np.int32)
 
     # Size of each cube with a source
-    df['total_x_size'] = cube_dim[0] - 1 + major_radius_pixels
-    df['total_y_size'] = cube_dim[1] - 1 + major_radius_pixels
-    df['total_f_size'] = ((upper_band - lower_band) / 2 + cube_dim[2]).astype(np.int32)
+    df['total_x_size'] = cube_dim[0] + major_radius_pixels + 2
+    df['total_y_size'] = cube_dim[1] + major_radius_pixels + 2
+    df['total_f_size'] = ((upper_band - lower_band) / 2 + cube_dim[2]).astype(np.int32) + 1
 
     shape = tuple(map(lambda i: header['NAXIS{}'.format(i)], range(1, 4)))
 
@@ -181,6 +181,10 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
                 prev_max_f1 = max_f1
                 min_f0 = int(df['f0'].iloc[i:i + batch_fetches].min())
                 max_f1 = int(df['f1'].iloc[i:i + batch_fetches].max())
+                
+                if max_f1 - prev_max_f1 < empty_cube_dim[-1]:
+                    max_f1 = prev_max_f1 + empty_cube_dim[-1]
+                    
                 cache_hi_cube(hi_cube_file, min_f0, max_f1)
 
             if row.id in allocation_dict.keys():
@@ -197,7 +201,6 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
 def add_empty_boxes(data: dict, hi_shape: np.ndarray, segmentmap: sparse.COO,
                     n_empty_cubes: int, empty_cube_dim: tuple, min_f: int, max_f: int):
     hi_shape[-1] = max_f - min_f
-
     counter = 0
     xyf_max = hi_shape - empty_cube_dim
     while counter < n_empty_cubes:

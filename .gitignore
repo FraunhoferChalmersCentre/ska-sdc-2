@@ -150,5 +150,6 @@ processed
 /runs/*
 */runs/
 tb_logs/
+saved_models
 
 scratch.py

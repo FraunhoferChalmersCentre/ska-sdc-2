@@ -51,10 +51,9 @@ def batch_by_allocation(dataset: AbstractSKADataset, batches: int):
 
 class Segmenter(pl.LightningModule):
     def __init__(self, model: nn.Module, loss_fct: Any, training_set: AbstractSKADataset,
-                 validation_set: AbstractSKADataset, logger: pl.loggers.TensorBoardLogger, batch_size=128, x_key='image',
-                 y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold = None, lr=1e-3):
+                 validation_set: AbstractSKADataset, batch_size=128, x_key='image',
+                 y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold = None, lr=1e-1, momentum=.9):
         super().__init__()
-        self.logger = logger
         self.batch_size = batch_size
         self.validation_set = validation_set
         self.training_set = training_set
@@ -65,15 +64,12 @@ class Segmenter(pl.LightningModule):
         self.vis_rotations = vis_rotations
         self.vis_max_angle = vis_max_angle
         self.lr = lr
+        self.momentum = momentum
 
         self.vis_id = vis_id
         self.threshold = threshold
-        self.log_image()
         
-        self.tp_sum = torch.tensor(0.)
-        self.fp_sum = torch.tensor(0.)
-        self.fn_sum = torch.tensor(0.)
-        self.tn_sum = torch.tensor(0.)
+        
         
         self.metrics = {
             'Soft dice': losses.DiceLoss(mode='binary'),
@@ -93,6 +89,14 @@ class Segmenter(pl.LightningModule):
             'Precision': self.precision_metric,
             'Sensitivity': self.sensitivity
         }
+    
+    def on_fit_start(self):
+        print('fit start')
+        self.log_image()
+        
+        self.reset_metrics()
+        
+        
     
     def rounded(self, prediction, truth):
         prediction = torch.where(nn.Sigmoid()(prediction).flatten() > self.threshold, 1, 0)
@@ -183,7 +187,7 @@ class Segmenter(pl.LightningModule):
 
     def _log_cross_sections(self, cube: torch.Tensor, pa: float, tag: str):
         for i in range(self.vis_rotations):
-            rotated = TF.rotate(cube.squeeze().T, float(i * self.vis_max_angle / self.vis_rotations - pa))
+            rotated = TF.rotate(cube.squeeze().T, float(i * self.vis_max_angle / self.vis_rotations - pa + 90))
 
             cropped_side = int(rotated.shape[1] / np.sqrt(2))
 
@@ -205,7 +209,7 @@ class Segmenter(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        self.port_metrics()
+        #self.port_metrics()
         x, y = batch[self.x_key], batch[self.y_key]
         y_hat = self.model(x)
         for metric, f in self.metrics.items():
@@ -230,5 +234,5 @@ class Segmenter(pl.LightningModule):
         return self.model(x)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.SGD(self.parameters(), lr=self.lr, momentum=self.momentum)
         return optimizer
