@@ -7,8 +7,8 @@ from tqdm.notebook import tqdm
 from utils.data.splitting import merge
 
 def read_splitted_dataset(directory: str):
-    files = glob.glob(directory + '/split_*.pt')
-    #random.shuffle(files)
+    files = glob.glob(directory + '/*.pt')
+    random.shuffle(files)
     
     dataset_splits = list()
     for f in tqdm(files):

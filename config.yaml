@@ -5,13 +5,19 @@ path:
   processed: ./processed/
   models: ./saved_models/
 
-preprocessing:
-  min_axis_pixels: 0.5 # minimum size of minor axis in pixels to be used for training
-
-segmentation:
+training:
+  filtering:
+    fraction:
+        training: 1.
+        validation: .3
+    power_measure: line_flux_integral # Column to use for filtering data to training
+  target:
+    smoothing_fwhm: 0 # FWHM in arcsec of Gaussian for smoothing segmap. 7 according to data description, 0 = no smoothing.
+    min_value: .1 # Minimum voxel value in final segmentmap used for training
+    padding: 0.5 # Padding around minor axis as relative length of major axis. 0 is X-shape segmentmap, 1 means full cylinder
   cube_size:
-    spatial: 64
-    freq: 64
+    spatial: 32
+    freq: 32
 
 torch:
   num_workers: 0 # Ignored if CPU is used, larger values require more RAM
