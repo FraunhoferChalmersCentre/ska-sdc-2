@@ -59,7 +59,7 @@ class DataFileName(DirectoryFileName):
         super().__init__(config['path']['data'])
 
     def true(self, types):
-        return self.get_path('sky_dev_{}truthcat_v1.2.txt'.format(types[-1].replace('s', '')))
+        return self.get_path('sky_dev_{}truthcat_v2.txt'.format(types[-1].replace('s', '')))
 
     def sky(self, types):
         return self._eval_dev_name(types, 'sky_eval.fits', 'sky_{}dev.fits')

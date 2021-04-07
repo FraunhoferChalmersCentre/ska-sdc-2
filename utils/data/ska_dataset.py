@@ -7,6 +7,80 @@ import numpy as np
 from torch.utils.data import Dataset
 
 
+class ItemGettingStrategy(ABC):
+    def get_item_strategy(self, dataset, item):
+        raise NotImplementedError
+
+
+class ValidationItemGetter(ItemGettingStrategy):
+    def get_item_strategy(self, dataset, item):
+        if isinstance(item, slice):
+            raise NotImplementedError('Not implemented slice items')
+        elif isinstance(item, tuple):
+            raise NotImplementedError('Not implemented tuple items')
+        else:
+            item_dict = dict()
+            if item < dataset.get_attribute('index'):
+                item_dict['image'] = dataset.get_attribute('image')[item]
+                item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[item]
+                item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_source_keys()})
+            else:
+                item_dict['image'] = dataset.get_attribute('image')[item]
+                item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[dataset.get_attribute('index')]
+                item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_common_keys()})
+                item_dict.update(
+                    {k: dataset.get_attribute(k)[dataset.get_attribute('index')] for k in dataset.get_different_keys()})
+            return item_dict
+
+
+class TrainingItemGetter(ItemGettingStrategy):
+    @staticmethod
+    def _inside_cube(pos, random, dim_s, dim_l):
+        if pos - dim_s < 0:
+            start = int(pos - random * pos)
+        elif pos + dim_s > dim_l:
+            start = int(pos - dim_s + random * (dim_l - pos))
+        else:
+            start = int(pos - random * dim_s)
+        end = int(start + dim_s)
+        return start, end
+
+    def get_item_strategy(self, dataset, item):
+        if isinstance(item, slice):
+            raise NotImplementedError('Not implemented slice items')
+        elif isinstance(item, tuple):
+            raise NotImplementedError('Not implemented tuple items')
+        else:
+            shape = dataset.get_attribute('image')[item].size()
+
+            slices = [slice(None)] * len(shape)
+
+            dim = dataset.get_attribute('dim')
+            item = item % dataset.__len__()
+            randoms = dataset.get_randomizer().random(len(dim), item)
+
+            item_dict = dict()
+
+            if item < dataset.get_attribute('index'):
+                pos_index = int(
+                    dataset.get_attribute('allocated_voxels')[item].shape[0] * dataset.get_randomizer().random(1, item))
+                position = dataset.get_attribute('allocated_voxels')[item][pos_index]
+                slices[-len(dim):] = [slice(*TrainingItemGetter._inside_cube(p, r, d, s)) for s, p, d, r in
+                                      zip(shape[-len(dim):], position, dim, randoms)]
+                item_dict['image'] = dataset.get_attribute('image')[item][slices]
+                item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[item][slices]
+                item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_source_keys()})
+            else:
+                slices[-len(dim):] = [slice(int(r * (s - d)), int(r * (s - d)) + d) for s, d, r in
+                                      zip(shape[-len(dim):], dim, randoms)]
+                item_dict['image'] = dataset.get_attribute('image')[item][slices]
+                item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[dataset.get_attribute('index')]
+                item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_common_keys()})
+                item_dict.update(
+                    {k: dataset.get_attribute(k)[dataset.get_attribute('index')] for k in dataset.get_different_keys()})
+        return item_dict
+
+
 class AbstractSKADataset(Dataset):
 
     def add_attribute(self, additional_attributes: dict):
@@ -15,7 +89,7 @@ class AbstractSKADataset(Dataset):
     def get_keys(self):
         raise NotImplementedError
 
-    def get_soruce_keys(self):
+    def get_source_keys(self):
         raise NotImplementedError
 
     def get_empty_keys(self):
@@ -42,59 +116,16 @@ class AbstractSKADataset(Dataset):
     def __getitem__(self, item) -> dict:
         raise NotImplementedError
 
-
-class BaseSKADataSet(AbstractSKADataset):
-    @staticmethod
-    def _inside_cube(pos, random, dim_s, dim_l):
-        if pos - dim_s < 0:
-            start = int(pos - random * pos)
-        elif pos + dim_s > dim_l:
-            start = int(pos - dim_s + random * (dim_l - pos))
-        else:
-            start = int(pos - random * dim_s)
-        end = int(start + dim_s)
-        return start, end
-
-    def __getitem__(self, item):
-        if isinstance(item, slice):
-            raise NotImplementedError('Not implemented slice items')
-        elif isinstance(item, tuple):
-            raise NotImplementedError('Not implemented tuple items')
-        else:
-            shape = self.get_attribute('image')[item].size()
-
-            slices = [slice(None)] * len(shape)
-
-            dim = self.get_attribute('dim')
-            item = item % self.__len__()
-            randoms = self.get_randomizer().random(len(dim), item)
-
-            get_item = dict()
-
-            if item < self.get_attribute('index'):
-                pos_index = int(
-                    self.get_attribute('allocated_voxels')[item].shape[0] * self.get_randomizer().random(1, item))
-                position = self.get_attribute('allocated_voxels')[item][pos_index]
-                slices[-len(dim):] = [slice(*BaseSKADataSet._inside_cube(p, r, d, s)) for s, p, d, r in
-                                      zip(shape[-len(dim):], position, dim, randoms)]
-                get_item['image'] = self.get_attribute('image')[item][slices]
-                get_item['segmentmap'] = self.get_attribute('segmentmap')[item][slices]
-                get_item.update({k: self.get_attribute(k)[item] for k in self.get_soruce_keys()})
-            else:
-                slices[-len(dim):] = [slice(int(r * (s - d)), int(r * (s - d)) + d) for s, d, r in
-                                      zip(shape[-len(dim):], dim, randoms)]
-                get_item['image'] = self.get_attribute('image')[item][slices]
-                get_item['segmentmap'] = self.get_attribute('segmentmap')[self.get_attribute('index')]
-                get_item.update({k: self.get_attribute(k)[item] for k in self.get_common_keys()})
-                get_item.update(
-                    {k: self.get_attribute(k)[self.get_attribute('index')] for k in self.get_different_keys()})
-        return get_item
+    def get_item_getter(self) -> ItemGettingStrategy:
+        raise NotImplementedError
 
 
-class SKADataSet(BaseSKADataSet):
-    def __init__(self, attributes: dict, random_type: Union[int, None] = None, source_keys: list = None,
+class SKADataSet(AbstractSKADataset):
+    def __init__(self, attributes: dict, item_getter: ItemGettingStrategy, random_type: Union[int, None] = None,
+                 source_keys: list = None,
                  empty_keys: list = None):
 
+        self.item_getter = item_getter
         self.data = attributes
         for k, v in attributes.items():
             if isinstance(v, list) and not isinstance(v[0], torch.Tensor):
@@ -115,6 +146,9 @@ class SKADataSet(BaseSKADataSet):
         self.common_keys = list(set.intersection(set(self.source_keys), set(self.empty_keys)))
         self.different_keys = list(set(self.source_keys) - set(self.common_keys))
 
+    def __getitem__(self, item):
+        return self.get_item_getter().get_item_strategy(self, item)
+
     def add_attribute(self, additional_attributes: dict, source_keys: list = None, empty_keys: list = None):
         for k, v in additional_attributes.items():
             if isinstance(v, list) and not isinstance(v[0], torch.Tensor):
@@ -133,7 +167,7 @@ class SKADataSet(BaseSKADataSet):
     def get_keys(self):
         return self.data.keys()
 
-    def get_soruce_keys(self):
+    def get_source_keys(self):
         return self.source_keys
 
     def get_empty_keys(self):
@@ -160,8 +194,11 @@ class SKADataSet(BaseSKADataSet):
     def __len__(self):
         return len(self.get_attribute('image'))
 
+    def get_item_getter(self) -> ItemGettingStrategy:
+        return self.item_getter
 
-class StaticSKATransformationDecorator(BaseSKADataSet):
+
+class StaticSKATransformationDecorator(AbstractSKADataset):
 
     def __init__(self, transformed_keys: Union[List[str], str], transform: Callable, decorated: AbstractSKADataset):
         self.decorated = decorated
@@ -178,8 +215,8 @@ class StaticSKATransformationDecorator(BaseSKADataSet):
     def get_keys(self):
         return list(self.transformed_data.keys()) + list(self.decorated.get_keys())
 
-    def get_soruce_keys(self):
-        return self.decorated.get_soruce_keys()
+    def get_source_keys(self):
+        return self.decorated.get_source_keys()
 
     def get_empty_keys(self):
         return self.decorated.get_empty_keys()
@@ -214,6 +251,12 @@ class StaticSKATransformationDecorator(BaseSKADataSet):
     def __len__(self):
         return len(self.get_attribute('image'))
 
+    def get_item_getter(self):
+        return self.decorated.get_item_getter()
+
+    def __getitem__(self, item):
+        return self.get_item_getter().get_item_strategy(self, item)
+
 
 class DynamicSKATransformationDecorator(AbstractSKADataset, ABC):
     def __init__(self, transformed_keys: Union[List[str], str], transform: Callable, decorated: AbstractSKADataset):
@@ -226,8 +269,8 @@ class DynamicSKATransformationDecorator(AbstractSKADataset, ABC):
     def get_keys(self):
         return self.decorated.get_keys()
 
-    def get_soruce_keys(self):
-        return self.decorated.get_soruce_keys()
+    def get_source_keys(self):
+        return self.decorated.get_source_keys()
 
     def get_empty_keys(self):
         return self.decorated.get_empty_keys()
