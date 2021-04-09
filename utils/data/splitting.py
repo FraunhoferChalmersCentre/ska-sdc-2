@@ -36,11 +36,23 @@ def fill_dict(units: np.ndarray, dataset: Dict[str, np.ndarray], required_attrs:
     return split_dict
 
 
-def split(dataset: Dict, left_fraction: float, required_attrs: List[str], random_state):
+def filter_units(dataset: Dict, units: np.ndarray, attribute: str, fraction: float):
+    empty_units = units[units > dataset['index']]
+    filter_values = np.array([dataset[attribute][u] for u in units[units <= dataset['index']]])
+    threshold = np.percentile(filter_values, fraction * 100)
+    source_units = units[(units > dataset['index']) & (filter_values > threshold)]
+    return np.concatenate([source_units, empty_units])
+
+
+def split(dataset: Dict, left_fraction: float, required_attrs: List[str], random_state: np.random.RandomState,
+          left_filter: float = None, right_filter: float = None, filter_attr: str = None):
     n_units = len(dataset[required_attrs[0]])
     n_left = int(n_units * left_fraction)
 
     left_units = random_state.choice(n_units, size=n_left, replace=False).astype(np.int32)
+    if left_filter is not None:
+        left_units = filter_units(dataset, left_filter)
+
     right_units = np.setdiff1d(np.arange(n_units), left_units).astype(np.int32)
 
     splits = tuple(map(np.sort, [left_units, right_units]))

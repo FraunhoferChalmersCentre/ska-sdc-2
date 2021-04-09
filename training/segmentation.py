@@ -1,6 +1,7 @@
 from typing import Any
 from itertools import starmap
 
+import pandas as pd
 import pytorch_lightning as pl
 import torch
 from torch import nn
@@ -17,6 +18,19 @@ from utils.data.ska_dataset import AbstractSKADataset
 SOFIA_ESTIMATED_ATTRS = {'ra', 'dec', 'line_flux_integral', 'w20', 'HI_size', 'i', 'pa'}
 
 
+def final_shapes(dim, upper_left, final_shape):
+    final_start = (dim * upper_left).astype(np.int32)
+    final_end = (dim * upper_left + dim).astype(np.int32)
+
+    ext_padding = np.zeros(3, dtype=np.int32)
+
+    for i, (e, s) in enumerate(zip(final_end, final_shape)):
+        ext_padding[i] = e - min(e, s)
+        final_end[i] = min(e, s)
+
+    return final_start, final_end, ext_padding
+
+
 class SortedSampler(Sampler):
     def __init__(self, dataset: AbstractSKADataset):
         allocations = list(starmap(lambda i, t: (i, len(t)), enumerate(dataset.get_attribute('allocated_voxels')[:-1])))
@@ -30,13 +44,13 @@ class SortedSampler(Sampler):
         return iter(self.sorted_indices)
 
 
-def get_vis_id(dataset, shape, min_allocated):
+def get_vis_id(dataset, shape, min_allocated, random_state=np.random):
     vis_id = None
 
     pos = dataset.get_attribute('position')
     alloc = dataset.get_attribute('allocated_voxels')
     while vis_id is None:
-        random_id = np.random.randint(0, dataset.get_attribute('index'))
+        random_id = random_state.randint(0, dataset.get_attribute('index'))
         candidate = True
         for r in pos[random_id].squeeze():
 
@@ -203,47 +217,57 @@ class Segmenter(pl.LightningModule):
             self.logger.experiment.add_image(log_tag, cropped[:, :, center].unsqueeze(0), self.global_step)
 
     def validation_output(self, validation_cube, dim, padding):
-        validation_cube = validation_cube.squeeze()
-
         # Prepare output cubes (without padding in input)
-        final_shape = tuple(starmap(lambda s, p: s - 2 * p, zip(validation_cube.shape, padding)))
-        final_cube = torch.zeros(final_shape)
+        final_shape = tuple(starmap(lambda s, p: s - 2 * p, zip(validation_cube.shape[2:], padding)))
+        final_cube = torch.empty(final_shape, device=self.device)
 
         # Get number of strides needed in each dimension
         patches_each_dim = tuple(
             starmap(lambda i, f: np.ceil(f / i), zip(dim, final_shape)))
         meshes = np.meshgrid(*map(np.arange, patches_each_dim))
+        upper_lefts = tuple(map(np.ravel, meshes))
 
-        for upper_left in zip(*map(np.ravel, meshes)):
-            final_start = (dim * upper_left).astype(np.int32)
-            final_end = (dim * upper_left + dim).astype(np.int32)
-            ext_padding = np.zeros(3, dtype=np.int32)
+        model_input = torch.empty(len(upper_lefts[0]), 1, *[d + 2 * p for d, p in zip(dim, padding)],
+                                  device=self.device)
 
-            for i, (e, s) in enumerate(zip(final_end, final_shape)):
-                ext_padding[i] = e - min(e, s)
-                final_end[i] = min(e, s)
+        for i, upper_left in enumerate(zip(*upper_lefts)):
+            final_start, final_end, ext_padding = final_shapes(dim, upper_left, final_shape)
 
-            stride_in = validation_cube[
-                tuple(starmap(lambda s, e, d, p: slice(s - p, e + d), zip(final_start, final_end, dim, ext_padding)))]
-            stride_out = self.model(torch.unsqueeze(torch.unsqueeze(stride_in, 0), 0)).squeeze()
+            slices = tuple(
+                starmap(lambda s, e, d, p: slice(s - p, e + d), zip(final_start, final_end, dim, ext_padding)))
+            slices = (slice(None), slice(None), *slices)
+            model_input[i] = validation_cube[slices]
+
+        model_out = self.model(model_input)
+
+        for i, upper_left in enumerate(zip(*upper_lefts)):
+            final_start, final_end, ext_padding = final_shapes(dim, upper_left, final_shape)
 
             padding_slices = tuple(starmap(lambda p, e: slice(p + e, -p), zip(padding, ext_padding)))
-            final_cube[tuple(starmap(lambda s, e: slice(s, e), zip(final_start, final_end)))] = stride_out[
-                padding_slices]
+            padding_slices = (i, slice(None), *padding_slices)
 
-        return final_cube
+            final_slices = tuple(starmap(lambda s, e: slice(s, e), zip(final_start, final_end)))
+
+            final_cube[final_slices] = model_out[padding_slices]
+
+        return final_cube.view(1, 1, *final_cube.shape)
 
     def parametrise_sources(self, input_cube, mask, position, padding):
+        if mask.sum() == 0.:
+            return pd.DataFrame()
+
         input_cube, mask, position = tuple(map(lambda t: t.detach().cpu().numpy(), (input_cube, mask, position)))
 
         df = extract_sources(input_cube, mask, self.header['bunit'])
 
         if len(df) > 0:
-            cube_spans = tuple(
-                [slice(int(pos[0] + pad), int(pos[1] - pad)) for pos, pad in zip(position.T, padding)])
-            wcs = WCS(self.header)[cube_spans]
-            df[['ra', 'dec', 'central_freq']] = wcs.all_pix2world(np.array(df[['x', 'y', 'z']], dtype=np.float32), 0)
+            # cube_spans = tuple(
+            #    [slice(int(pos[0] + pad), int(pos[1] - pad)) for pos, pad in zip(position.T, padding)])
+            wcs = WCS(self.header)
+            df[['ra', 'dec', 'central_freq']] = wcs.all_pix2world(
+                np.array(df[['x', 'y', 'z']] + position[0, 0], dtype=np.float32), 0)
             df['w20'] = df['w20'] * 3e5 * self.header['CDELT3'] / self.header['RESTFREQ']
+            # df['f_int'] = df['f_int'] * self.header['CDELT3'] / (np.pi * (7 / 2.8) ** 2 / (4 * np.log(2)))
 
         return df
 
@@ -267,10 +291,10 @@ class Segmenter(pl.LightningModule):
             for i, row in parametrized_df.iterrows():
                 predicted_pos = np.array([row.ra, row.dec])
                 true_pos = np.array([batch['ra'].cpu().numpy(), batch['dec'].cpu().numpy()]).flatten()
-                if np.linalg.norm(predicted_pos - true_pos) < batch['hi_size'].cpu().numpy() / (2 * 3600) and np.abs(
+                if np.linalg.norm(predicted_pos - true_pos) * 3600 < batch['hi_size'].cpu().numpy() / 2 and np.abs(
                         batch['central_freq'].cpu().numpy() - row['central_freq']) < batch['w20'].cpu().numpy() / 2:
                     tp = True
-                break
+                    break
             if tp:
                 self.sofia_metrics['TP'] += 1
             else:
@@ -291,16 +315,20 @@ class Segmenter(pl.LightningModule):
         clipped_input = batch['image'].squeeze()[[slice(p, - p) for p in padding]]
 
         model_out = self.validation_output(batch['image'], dim, padding)
-        mask = torch.where(model_out > 0, 1., 0.)
+        mask = torch.where(model_out > 0., 1, 0).squeeze()
         self.parametrisation_validation(batch, batch_idx, clipped_input, mask, padding)
 
-        clipped_segmap = batch['segmentmap'].squeeze()[[slice(p, - p) for p in padding]]
+        clipped_segmap = torch.empty(model_out.shape, device=self.device)
+        clipped_segmap[0, 0] = batch['segmentmap'].squeeze()[[slice(p, - p) for p in padding]]
+
         for metric, f in self.metrics.items():
             self.log(metric, f(model_out, clipped_segmap), on_step=True, on_epoch=True, sync_dist=True)
 
     def validation_epoch_end(self, validation_step_outputs):
         for metric, f in self.derivatives.items():
             self.log(metric, f(), on_step=False, on_epoch=True, sync_dist=True)
+        for metric, value in self.sofia_metrics.items():
+            self.log('SoFiA/' + metric, value)
         self.log_prediction_image()
         self.reset_metrics()
 

@@ -74,7 +74,7 @@ class TrainingItemGetter(ItemGettingStrategy):
                 slices[-len(dim):] = [slice(int(r * (s - d)), int(r * (s - d)) + d) for s, d, r in
                                       zip(shape[-len(dim):], dim, randoms)]
                 item_dict['image'] = dataset.get_attribute('image')[item][slices]
-                item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[dataset.get_attribute('index')]
+                item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[dataset.get_attribute('index')][slices]
                 item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_common_keys()})
                 item_dict.update(
                     {k: dataset.get_attribute(k)[dataset.get_attribute('index')] for k in dataset.get_different_keys()})
@@ -163,6 +163,11 @@ class SKADataSet(AbstractSKADataset):
             self.empty_keys += empty_keys
         self.common_keys = list(set.intersection(set(self.source_keys), set(self.empty_keys)))
         self.different_keys = list(set(self.source_keys) - set(self.common_keys))
+
+    def filter(self, attribute, fraction):
+        attr = torch.tensor(self.get_attribute(attribute)).squeeze()
+        attr = torch.sort(attr)
+
 
     def get_keys(self):
         return self.data.keys()

@@ -124,8 +124,9 @@ def extract_sources(cube: np.ndarray, mask: np.ndarray, dunits):
     objects, catParNames, catParUnits, catParFormt, mask = remove_non_reliable(objects, mask, catParNamesBase,
                                                                                catParFormtBase, catParUnitsBase)
 
+    mask, objects = parametrisation.dilate(cube, mask, objects, catParNames, Parameters)
+
     np_Cube, mask, objects, catParNames, catParFormt, catParUnits = parametrisation.parametrise(
         cube, mask, objects, catParNames, catParFormt, catParUnits, Parameters, dunits)
 
     return pd.DataFrame(objects, columns=catParNames)
-
