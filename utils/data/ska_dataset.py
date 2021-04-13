@@ -164,10 +164,6 @@ class SKADataSet(AbstractSKADataset):
         self.common_keys = list(set.intersection(set(self.source_keys), set(self.empty_keys)))
         self.different_keys = list(set(self.source_keys) - set(self.common_keys))
 
-    def filter(self, attribute, fraction):
-        attr = torch.tensor(self.get_attribute(attribute)).squeeze()
-        attr = torch.sort(attr)
-
 
     def get_keys(self):
         return self.data.keys()

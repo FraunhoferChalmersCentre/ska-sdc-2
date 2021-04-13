@@ -1,12 +1,10 @@
-from astropy.io import fits
-from astropy.wcs import WCS
 import numpy as np
 from sofia import readoptions, linker, parametrisation, wcs_coordinates
 import pandas as pd
 
 import definitions
 
-default_file = definitions.ROOT_DIR + '/SoFiA_default_input.txt'
+default_file = definitions.ROOT_DIR + '/training/SoFiA_parameters.txt'
 Parameters = readoptions.readPipelineOptions(default_file)
 
 catParNamesBase = (

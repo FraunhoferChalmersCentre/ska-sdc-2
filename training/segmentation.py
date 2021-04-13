@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, List
 from itertools import starmap
 
 import pandas as pd
@@ -16,6 +16,8 @@ from training.downstream import extract_sources
 from utils.data.ska_dataset import AbstractSKADataset
 
 SOFIA_ESTIMATED_ATTRS = {'ra', 'dec', 'line_flux_integral', 'w20', 'HI_size', 'i', 'pa'}
+
+SPEED_OF_LIGHT = 3e5
 
 
 def final_shapes(dim, upper_left, final_shape):
@@ -64,8 +66,8 @@ def get_vis_id(dataset, shape, min_allocated, random_state=np.random):
     return vis_id
 
 
-def batch_by_allocation(dataset: AbstractSKADataset, batches: int):
-    allocations = list(map(len, dataset.get_attribute('allocated_pixels')))
+def get_metrics():
+    return
 
 
 class Segmenter(pl.LightningModule):
@@ -90,105 +92,42 @@ class Segmenter(pl.LightningModule):
         self.vis_id = vis_id
         self.threshold = threshold
 
-        self.metrics = {
-            'Soft dice': losses.DiceLoss(mode='binary'),
-            'Soft Jaccard': losses.JaccardLoss(mode='binary'),
-            'Lovasz hinge': losses.BinaryLovaszLoss(),
-            'Cross Entropy': losses.SoftBCEWithLogitsLoss(),
-            'TP': self.tp,
-            'FP': self.fp,
-            'FN': self.fn,
-            'TN': self.tn
+        self.pixel_precision = pl.metrics.Precision(num_classes=1, is_multiclass=False)
+        self.pixel_recall = pl.metrics.Recall(num_classes=1, is_multiclass=False)
+        self.pixel_dice = pl.metrics.F1(num_classes=1)
+
+        self.sofia_precision = pl.metrics.Precision(num_classes=1, is_multiclass=False)
+        self.sofia_recall = pl.metrics.Recall(num_classes=1, is_multiclass=False)
+        self.sofia_dice = pl.metrics.F1(num_classes=1)
+
+        self.pixel_metrics = {
+            'precision': self.pixel_precision,
+            'recall': self.pixel_recall,
+            'dice': self.pixel_dice
         }
 
-        self.derivatives = {
-            'Jaccard': self.jaccard,
-            'Dice': self.dice,
-            'Specificity': self.specificity,
-            'Precision': self.precision_metric,
-            'Sensitivity': self.sensitivity
+        self.sofia_metrics = {
+            'precision': self.sofia_precision,
+            'recall': self.sofia_recall,
+            'dice': self.sofia_dice
+        }
+
+        self.dice = losses.DiceLoss(mode='binary')
+        self.lovasz = losses.BinaryLovaszLoss()
+        self.cross_entropy = losses.SoftBCEWithLogitsLoss()
+
+        self.surrogates = {
+            'Soft dice': self.dice,
+            'Lovasz hinge': self.lovasz,
+            'Cross Entropy': self.cross_entropy
         }
 
     def on_fit_start(self):
         self.log_image()
 
-        self.reset_metrics()
-
-    def rounded(self, prediction, truth):
-        prediction = torch.where(nn.Sigmoid()(prediction).flatten() > self.threshold, 1, 0)
-        truth = truth.flatten().round()
-        return prediction, truth
-
-    def reset_metrics(self):
-        self.tp_sum = torch.tensor(0.).to(self.device)
-        self.fp_sum = torch.tensor(0.).to(self.device)
-        self.fn_sum = torch.tensor(0.).to(self.device)
-        self.tn_sum = torch.tensor(0.).to(self.device)
-
-        self.sofia_metrics = {
-            'TP': 0,
-            'FP': 0,
-            'TN': 0,
-            'FN': 0
-        }
-
-    def tp(self, prediction, truth):
-        prediction, truth = self.rounded(prediction, truth)
-        current_tp = (prediction * truth).sum()
-        self.tp_sum += current_tp
-        return current_tp
-
-    def fp(self, prediction, truth):
-        prediction, truth = self.rounded(prediction, truth)
-        current_fp = torch.sum(torch.logical_xor(prediction, truth) * prediction)
-        self.fp_sum += current_fp
-        return current_fp
-
-    def fn(self, prediction, truth):
-        prediction, truth = self.rounded(prediction, truth)
-        current_fn = torch.sum(torch.logical_xor(prediction, truth) * torch.logical_not(prediction))
-        self.fn_sum += current_fn
-        return current_fn
-
-    def tn(self, prediction, truth):
-        prediction, truth = self.rounded(prediction, truth)
-        current_tn = torch.sum(torch.logical_not(prediction) * torch.logical_not(truth))
-        self.tn_sum += current_tn
-        return current_tn
-
-    def jaccard(self):
-        denom = self.tp_sum + self.fp_sum + self.fn_sum
-        if torch.eq(denom, 0):
-            return torch.tensor(0)
-        return self.tp_sum / denom
-
-    def dice(self):
-        denom = 2 * self.tp_sum + self.fp_sum + self.fn_sum
-        if torch.eq(denom, 0):
-            return torch.tensor(0)
-        return 2 * self.tp_sum / denom
-
-    def sensitivity(self):
-        denom = self.tp_sum + self.fn_sum
-        if torch.eq(denom, 0):
-            return torch.tensor(0)
-        return self.tp_sum / denom
-
-    def specificity(self):
-        denom = self.tn_sum + self.fp_sum
-        if torch.eq(denom, 0):
-            return torch.tensor(0)
-        return self.tn_sum / denom
-
-    def precision_metric(self):
-        denom = self.tp_sum + self.fp_sum
-        if torch.eq(denom, 0):
-            return torch.tensor(0)
-        return self.tp_sum / denom
-
     def log_image(self):
         image = self.validation_set.get_attribute(self.x_key)[self.vis_id].squeeze()
-        slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d / 2), int(s / 2 - d / 2) + d),
+        slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d), int(s / 2 - d) + 2 * d),
                                zip(image.shape, self.validation_set.get_attribute('dim'))))
         self._log_cross_sections(image[slices], self.validation_set[self.vis_id]['pa'], self.x_key)
         segmap = self.validation_set.get_attribute(self.y_key)[self.vis_id].squeeze()
@@ -198,7 +137,7 @@ class Segmenter(pl.LightningModule):
 
     def log_prediction_image(self):
         image = self.validation_set.get_attribute(self.x_key)[self.vis_id].squeeze()
-        slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d / 2), int(s / 2 - d / 2) + d),
+        slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d), int(s / 2 - d) + 2 * d),
                                zip(image.shape, self.validation_set.get_attribute('dim'))))
         input_image = image[slices].unsqueeze(0).unsqueeze(0).to(self.device)
         prediction = nn.Sigmoid()(self.model(input_image)).squeeze()
@@ -265,8 +204,8 @@ class Segmenter(pl.LightningModule):
             #    [slice(int(pos[0] + pad), int(pos[1] - pad)) for pos, pad in zip(position.T, padding)])
             wcs = WCS(self.header)
             df[['ra', 'dec', 'central_freq']] = wcs.all_pix2world(
-                np.array(df[['x', 'y', 'z']] + position[0, 0], dtype=np.float32), 0)
-            df['w20'] = df['w20'] * 3e5 * self.header['CDELT3'] / self.header['RESTFREQ']
+                np.array(df[['z_geo', 'y_geo', 'x_geo']] + position[0, 0] + padding, dtype=np.float32), 0)
+            df['w20'] = df['w20'] * SPEED_OF_LIGHT * self.header['CDELT3'] / self.header['RESTFREQ']
             # df['f_int'] = df['f_int'] * self.header['CDELT3'] / (np.pi * (7 / 2.8) ** 2 / (4 * np.log(2)))
 
         return df
@@ -278,59 +217,65 @@ class Segmenter(pl.LightningModule):
         y_hat = self.model(x)
         loss = self.loss_fct(y_hat, y)
         # Logging to TensorBoard by default
-        self.log('train_loss', loss, on_step=True, on_epoch=True, sync_dist=True, logger=True)
+        self.log('train_loss', loss, on_epoch=True)
 
         return loss
 
-    def parametrisation_validation(self, batch, batch_idx, clipped_input, mask, padding):
-        parametrized_df = self.parametrise_sources(clipped_input, mask, batch['position'], padding)
-
-        if batch_idx < self.validation_set.get_attribute('index'):
+    def parametrisation_validation(self, parametrized_df, batch, has_source):
+        if has_source:
             # There is a source in this
-            tp = False
             for i, row in parametrized_df.iterrows():
                 predicted_pos = np.array([row.ra, row.dec])
                 true_pos = np.array([batch['ra'].cpu().numpy(), batch['dec'].cpu().numpy()]).flatten()
-                if np.linalg.norm(predicted_pos - true_pos) * 3600 < batch['hi_size'].cpu().numpy() / 2 and np.abs(
-                        batch['central_freq'].cpu().numpy() - row['central_freq']) < batch['w20'].cpu().numpy() / 2:
-                    tp = True
-                    break
-            if tp:
-                self.sofia_metrics['TP'] += 1
-            else:
-                self.sofia_metrics['FN'] += 1
-        else:
-            if len(parametrized_df) > 0:
-                self.sofia_metrics['FP'] += 1
-            else:
-                self.sofia_metrics['TN'] += 1
 
-    # No sources in this batch
+                line_width_freq = self.header['RESTFREQ'] * batch['w20'].cpu().numpy() / SPEED_OF_LIGHT
+                if np.linalg.norm(predicted_pos - true_pos) * 3600 < batch['hi_size'].cpu().numpy() / 2 and np.abs(
+                        batch['central_freq'].cpu().numpy() - row['central_freq']) < line_width_freq / 2:
+                    return True
+            return False
+        else:
+            # No sources in this batch
+            return len(parametrized_df) > 0
 
     def validation_step(self, batch, batch_idx):
+        # IMPORTANT: Single batch assumed when validating
+
         # Compute padding
         dim = np.array(self.validation_set.get_attribute('dim'))
         padding = (dim / 2).astype(np.int32)
 
-        clipped_input = batch['image'].squeeze()[[slice(p, - p) for p in padding]]
-
         model_out = self.validation_output(batch['image'], dim, padding)
-        mask = torch.where(model_out > 0., 1, 0).squeeze()
-        self.parametrisation_validation(batch, batch_idx, clipped_input, mask, padding)
+        mask = torch.round(nn.Sigmoid()(model_out))
 
         clipped_segmap = torch.empty(model_out.shape, device=self.device)
-        clipped_segmap[0, 0] = batch['segmentmap'].squeeze()[[slice(p, - p) for p in padding]]
+        clipped_segmap[0, 0] = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
 
-        for metric, f in self.metrics.items():
-            self.log(metric, f(model_out, clipped_segmap), on_step=True, on_epoch=True, sync_dist=True)
+        for surrogate, f in self.surrogates.items():
+            self.log(surrogate, f(mask, clipped_segmap.float()), on_step=True, on_epoch=True)
+
+        for metric, f in self.pixel_metrics.items():
+            f(mask.int().view(-1), clipped_segmap.int().view(-1))
+            self.log('pixel_{}'.format(metric), f, on_epoch=True)
+
+        has_source = batch_idx < self.validation_set.get_attribute('index')
+        clipped_input = torch.empty(model_out.shape, device=self.device).squeeze()
+        clipped_input[:, :, :] = batch['image'][0, 0][[slice(p, - p) for p in padding]]
+
+        parametrized_df = self.parametrise_sources(clipped_input, mask.squeeze(), batch['position'], padding)
+        sofia_out = self.parametrisation_validation(parametrized_df, batch, has_source)
+
+        has_source, sofia_out = tuple(
+            map(lambda t: torch.tensor(t, device=self.device).view(-1), (has_source, sofia_out)))
+
+        for metric, f in self.sofia_metrics.items():
+            f(sofia_out, has_source)
+            self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
     def validation_epoch_end(self, validation_step_outputs):
-        for metric, f in self.derivatives.items():
-            self.log(metric, f(), on_step=False, on_epoch=True, sync_dist=True)
-        for metric, value in self.sofia_metrics.items():
-            self.log('SoFiA/' + metric, value)
+        pass
+
+    def training_epoch_end(self, outputs: List[Any]) -> None:
         self.log_prediction_image()
-        self.reset_metrics()
 
     def train_dataloader(self):
         return DataLoader(self.training_set, batch_size=self.batch_size, shuffle=True)
@@ -342,5 +287,5 @@ class Segmenter(pl.LightningModule):
         return self.model(x)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.SGD(self.parameters(), lr=self.lr, momentum=self.momentum)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
