@@ -22,20 +22,19 @@ class DirectoryFileName:
             return self.get_path(dev_name.format(types[-1].replace('s', '')))
         raise ValueError('Unknown type')
 
+
 class ModelsFileName(DirectoryFileName):
     def __init__(self):
         super().__init__(config['path']['models'])
-    
+
     def new_model(self):
-        
         return self.by_id(self.new_id)
-    
+
     def new_id(self):
         return len([name for name in os.listdir('.') if os.path.isfile(name)])
-    
+
     def by_id(self, id):
         return self.get_path('{}.pt'.format(id))
-        
 
 
 class ProcessedFileName(DirectoryFileName):
@@ -47,12 +46,13 @@ class ProcessedFileName(DirectoryFileName):
 
     def allocation_dict(self, types):
         return self._eval_dev_name(types, 'segmap_eval.npz', 'allocation_{}dev.pb')
-    
-    def dataset(self, size: str, cube_side: int, transform: str, prob: int):
-        name = 'dataset_{}_{}_{}_{}'.format(size, cube_side, transform, prob)
+
+    def dataset(self, size: str, cube_side: int, prob: int):
+        name = 'dataset_{}_{}_{}'.format(size, cube_side, prob)
         path = self.get_path(name)
         prepare_dir(path)
         return path
+
 
 class DataFileName(DirectoryFileName):
     def __init__(self):
@@ -69,7 +69,7 @@ class DataFileName(DirectoryFileName):
 
     def readme(self, types):
         return self._eval_dev_name(types, 'README_eval.txt', 'README_{}dev.txt')
-    
+
     def transformed(self, types, transform):
         return self._eval_dev_name(types, 'sky_eval.fits', 'sky_{}dev_' + '{}_transform.fits'.format(transform))
 

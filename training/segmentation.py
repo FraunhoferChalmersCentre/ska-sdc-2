@@ -20,6 +20,9 @@ SOFIA_ESTIMATED_ATTRS = {'ra', 'dec', 'line_flux_integral', 'w20', 'HI_size', 'i
 SPEED_OF_LIGHT = 3e5
 
 
+
+
+
 def final_shapes(dim, upper_left, final_shape):
     final_start = (dim * upper_left).astype(np.int32)
     final_end = (dim * upper_left + dim).astype(np.int32)
@@ -73,7 +76,7 @@ def get_metrics():
 class Segmenter(pl.LightningModule):
     def __init__(self, model: nn.Module, loss_fct: Any, training_set: AbstractSKADataset,
                  validation_set: AbstractSKADataset, header: fits.Header, batch_size=128, x_key='image',
-                 y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold=None, lr=1e-1,
+                 y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold=None, lr=1e-2,
                  momentum=.9):
         super().__init__()
         self.header = header
@@ -122,25 +125,48 @@ class Segmenter(pl.LightningModule):
             'Cross Entropy': self.cross_entropy
         }
 
+    def get_model_input(self, image, position, scale, slices):
+        transformed_image = torch.empty(image.shape, device=self.device)
+        start = position[:, 0, -1] + slices[:, 0, -1]
+        stop = position[:, 0, -1] + slices[:, -1, -1]
+
+        for i, (im, start_channel, end_channel) in enumerate(zip(image, start.int(), stop.int())):
+            tr_im = im.T.clone()
+            for j, value_span in enumerate(scale[start_channel:end_channel]):
+                tr_im[j] = (tr_im[j] - value_span[0]) / (value_span[1] - value_span[0])
+            transformed_image[i] = tr_im.T
+
+        transformed_image = torch.clamp(transformed_image, 0., 1.)
+        return transformed_image.float()
+
     def on_fit_start(self):
         self.log_image()
+        self.log_prediction_image()
 
     def log_image(self):
         image = self.validation_set.get_attribute(self.x_key)[self.vis_id].squeeze()
         slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d), int(s / 2 - d) + 2 * d),
                                zip(image.shape, self.validation_set.get_attribute('dim'))))
-        self._log_cross_sections(image[slices], self.validation_set[self.vis_id]['pa'], self.x_key)
+        normed_img = (image[slices] - image[slices].min()) / (image[slices].max() - image[slices].min())
+        self._log_cross_sections(normed_img, self.validation_set[self.vis_id]['pa'], self.x_key)
         segmap = self.validation_set.get_attribute(self.y_key)[self.vis_id].squeeze()
         if segmap.sum() == 0:
             raise ValueError('Logged segmentmap contains no source voxels. Reshuffle!')
+
         self._log_cross_sections(segmap[slices], self.validation_set[self.vis_id]['pa'], self.y_key)
 
     def log_prediction_image(self):
         image = self.validation_set.get_attribute(self.x_key)[self.vis_id].squeeze()
+        position = self.validation_set.get_attribute('position')[self.vis_id]
+        position = position.view(1, *position.shape)
         slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d), int(s / 2 - d) + 2 * d),
                                zip(image.shape, self.validation_set.get_attribute('dim'))))
-        input_image = image[slices].unsqueeze(0).unsqueeze(0).to(self.device)
-        prediction = nn.Sigmoid()(self.model(input_image)).squeeze()
+
+        input_image = image[slices].to(self.device).view(1, 1, *image[slices].shape)
+        slices = torch.tensor([[s.start, s.stop] for s in slices]).T
+        scale = self.validation_set.get_attribute('scale')
+        model_input = self.get_model_input(input_image, position, scale, slices.view(1, *slices.shape))
+        prediction = nn.Sigmoid()(self.model(model_input)).squeeze()
         self._log_cross_sections(prediction, self.validation_set[self.vis_id]['pa'], 'Prediction')
 
     def _log_cross_sections(self, cube: torch.Tensor, pa: float, tag: str):
@@ -155,7 +181,7 @@ class Segmenter(pl.LightningModule):
             log_tag = tag + '/{:.1f}'.format(i * self.vis_max_angle / self.vis_rotations)
             self.logger.experiment.add_image(log_tag, cropped[:, :, center].unsqueeze(0), self.global_step)
 
-    def validation_output(self, validation_cube, dim, padding):
+    def validation_output(self, validation_cube, dim, padding, position):
         # Prepare output cubes (without padding in input)
         final_shape = tuple(starmap(lambda s, p: s - 2 * p, zip(validation_cube.shape[2:], padding)))
         final_cube = torch.empty(final_shape, device=self.device)
@@ -169,15 +195,19 @@ class Segmenter(pl.LightningModule):
         model_input = torch.empty(len(upper_lefts[0]), 1, *[d + 2 * p for d, p in zip(dim, padding)],
                                   device=self.device)
 
+        all_slices = torch.empty(len(upper_lefts[0]), 2, 3, device=self.device)
         for i, upper_left in enumerate(zip(*upper_lefts)):
             final_start, final_end, ext_padding = final_shapes(dim, upper_left, final_shape)
 
             slices = tuple(
                 starmap(lambda s, e, d, p: slice(s - p, e + d), zip(final_start, final_end, dim, ext_padding)))
-            slices = (slice(None), slice(None), *slices)
-            model_input[i] = validation_cube[slices]
+            model_input[i] = validation_cube[(slice(None), slice(None), *slices)]
+            all_slices[i] = torch.tensor([[s.start, s.stop] for s in slices]).T
 
-        model_out = self.model(model_input)
+        scale = self.validation_set.get_attribute('scale')
+        position = torch.repeat_interleave(position, len(upper_lefts[0]), 0)
+        x_batch = self.get_model_input(model_input, position, scale, all_slices)
+        model_out = self.model(x_batch)
 
         for i, upper_left in enumerate(zip(*upper_lefts)):
             final_start, final_end, ext_padding = final_shapes(dim, upper_left, final_shape)
@@ -206,7 +236,7 @@ class Segmenter(pl.LightningModule):
             df[['ra', 'dec', 'central_freq']] = wcs.all_pix2world(
                 np.array(df[['z_geo', 'y_geo', 'x_geo']] + position[0, 0] + padding, dtype=np.float32), 0)
             df['w20'] = df['w20'] * SPEED_OF_LIGHT * self.header['CDELT3'] / self.header['RESTFREQ']
-            # df['f_int'] = df['f_int'] * self.header['CDELT3'] / (np.pi * (7 / 2.8) ** 2 / (4 * np.log(2)))
+            df['f_int'] = df['f_int'] * self.header['CDELT3'] / (np.pi * (7 / 2.8) ** 2 / (4 * np.log(2)))
 
         return df
 
@@ -214,7 +244,10 @@ class Segmenter(pl.LightningModule):
         # training_step defined the train loop.
         # It is independent of forward
         x, y = batch[self.x_key], batch[self.y_key]
-        y_hat = self.model(x)
+
+        scale = self.training_set.get_attribute('scale')
+        x_batch = self.get_model_input(batch[self.x_key], batch['position'], scale, batch['slices'])
+        y_hat = self.model(x_batch)
         loss = self.loss_fct(y_hat, y)
         # Logging to TensorBoard by default
         self.log('train_loss', loss, on_epoch=True)
@@ -244,7 +277,7 @@ class Segmenter(pl.LightningModule):
         dim = np.array(self.validation_set.get_attribute('dim'))
         padding = (dim / 2).astype(np.int32)
 
-        model_out = self.validation_output(batch['image'], dim, padding)
+        model_out = self.validation_output(batch['image'], dim, padding, batch['position'])
         mask = torch.round(nn.Sigmoid()(model_out))
 
         clipped_segmap = torch.empty(model_out.shape, device=self.device)
@@ -287,5 +320,4 @@ class Segmenter(pl.LightningModule):
         return self.model(x)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        return optimizer
+        return torch.optim.SGD(self.parameters(), lr=self.lr, momentum=self.momentum)

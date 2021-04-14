@@ -5,7 +5,7 @@ import torch
 
 from utils.data.ska_dataset import SKADataSet, StaticSKATransformationDecorator, TrainingItemGetter, \
     ValidationItemGetter
-from utils.data.generating import COMMON_ATTRIBUTES, SOURCE_ATTRIBUTES
+from utils.data.generating import COMMON_ATTRIBUTES, SOURCE_ATTRIBUTES, GLOBAL_ATTRIBUTES
 
 
 def to_float(tensors: List[torch.Tensor]): return list(map(lambda t: t.float(), tensors))
@@ -20,7 +20,7 @@ def fill_dict(units: np.ndarray, dataset: Dict[str, np.ndarray], required_attrs:
         if k == 'index':
             split_dict[k] = len(units[units < v])
             continue
-        if k == 'dim':
+        elif k in GLOBAL_ATTRIBUTES:
             split_dict[k] = v
             continue
 
@@ -81,7 +81,7 @@ def merge(*datasets: Dict):
         for k, v in d.items():
             if k == 'index':
                 continue
-            elif k == 'dim':
+            elif k in GLOBAL_ATTRIBUTES:
                 if k not in merged.keys():
                     merged[k] = v
             else:

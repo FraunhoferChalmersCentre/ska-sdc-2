@@ -34,8 +34,9 @@ catParNames_tmp = ("n_pix", "n_chan", "n_los", "snr_min", "snr_max", "snr_sum", 
 
 
 def remove_non_reliable(objects, mask, catParNames, catParFormt, catParUnits):
-    reliable = list(np.array(objects)[np.array(objects)[:, catParNamesBase.index('snr_sum')] > 0, 0].astype(
-        int))  # select all positive sources
+    reliable = list(np.array(objects)[:, 0].astype(int))
+    #reliable = list(np.array(objects)[np.array(objects)[:, catParNamesBase.index('snr_sum')] > 0, 0].astype(
+    #    int))  # select all positive sources
 
     objects, catParNames, catParUnits, catParFormt = remove_cols(objects, catParNames, catParFormt, catParUnits)
     # Make sure that reliable is sorted
@@ -121,6 +122,9 @@ def extract_sources(cube: np.ndarray, mask: np.ndarray, dunits):
 
     objects, catParNames, catParUnits, catParFormt, mask = remove_non_reliable(objects, mask, catParNamesBase,
                                                                                catParFormtBase, catParUnitsBase)
+
+    if len(objects) == 0:
+        return pd.DataFrame()
 
     mask, objects = parametrisation.dilate(cube, mask, objects, catParNames, Parameters)
 

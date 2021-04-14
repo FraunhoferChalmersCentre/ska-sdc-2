@@ -11,7 +11,7 @@ import torch
 from tqdm.auto import tqdm
 
 # attributes for the dataset generally
-GLOBAL_ATTRIBUTES = {'dim', 'index'}
+GLOBAL_ATTRIBUTES = {'dim', 'index', 'scale'}
 
 # attributes only defined in boxes with source
 SOURCE_ATTRIBUTES = {'segmentmap', 'allocated_voxels', 'ra', 'dec', 'hi_size', 'line_flux_integral',
@@ -28,13 +28,17 @@ SPEED_OF_LIGHT = 3e5
 
 hi_cube_tensor = None
 f0 = None
+scale = []
 
 
 def cache_hi_cube(hi_cube_file, min_f0, max_f1):
-    global hi_cube_tensor, f0
+    global scale, hi_cube_tensor, f0
     f0 = min_f0
     hi_data_fits = fits.getdata(hi_cube_file, ignore_blank=True)
     hi_cube_tensor = torch.tensor(hi_data_fits[min_f0:max_f1].astype(np.float32), dtype=torch.float32).T
+    for l in range(min_f0, max_f1):
+        if len(scale) <= l:
+            scale.append(torch.tensor(np.percentile(hi_data_fits[l], [.1, 99.9]), dtype=torch.float32))
 
 
 def get_hi_cube_slice(slices: tuple):
@@ -165,11 +169,9 @@ def get_hi_shape(hi_cube_file: str):
 def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_file: str, coord_keys: List[str],
               segmentmap: sparse.COO, allocation_dict: dict, n_memory_batches: int, prob_galaxy: float,
               empty_cube_dim: tuple):
+    global scale
     batch_fetches = int(len(df) / n_memory_batches)
 
-    hi_shape = get_hi_shape(hi_cube_file)
-
-    min_f0 = 0
     max_f1 = 0
     prev_max_f1 = 0
     batch_counter = 0
@@ -183,13 +185,15 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
             if row.f1 > max_f1:
                 # Add empty boxes from current cache
                 n_empty_batch = int(batch_counter * (1 - prob_galaxy) / prob_galaxy)
-                empty_dict = add_empty_boxes(empty_dict, hi_shape, segmentmap, n_empty_batch, empty_cube_dim,
+                empty_dict = add_empty_boxes(empty_dict, hi_cube_file, segmentmap, n_empty_batch, empty_cube_dim,
                                              prev_max_f1, max_f1)
                 batch_counter = 0
 
                 # Update channel spans
                 prev_max_f1 = max_f1
                 min_f0 = int(df['f0'].iloc[i:i + batch_fetches].min())
+                min_f0 = min(min_f0, prev_max_f1)
+
                 max_f1 = int(df['f1'].iloc[i:i + batch_fetches].max())
 
                 if max_f1 - prev_max_f1 < empty_cube_dim[-1]:
@@ -203,13 +207,20 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
                 sources_dict = append_common_attributes(sources_dict, hi_cube_file=hi_cube_file, slices=slices)
                 sources_dict = append_source_attributes(sources_dict, row, segmentmap=segmentmap[slices].todense(),
                                                         allocation_dict=allocation_dict)
+        # Ensure scale is computed for all channels
+        if max_f1 <= get_hi_shape(hi_cube_file)[-1]:
+            cache_hi_cube(hi_cube_file, max_f1, get_hi_shape(hi_cube_file)[-1])
+
     sources_dict['index'] = len(sources_dict['image'])
+    sources_dict['scale'] = scale
 
     return sources_dict, empty_dict
 
 
-def add_empty_boxes(data: dict, hi_shape: np.ndarray, segmentmap: sparse.COO,
-                    n_empty_cubes: int, empty_cube_dim: tuple, min_f: int, max_f: int):
+def add_empty_boxes(data: dict, hi_cube_file: str, segmentmap: sparse.COO, n_empty_cubes: int, empty_cube_dim: tuple,
+                    min_f: int,
+                    max_f: int):
+    hi_shape = get_hi_shape(hi_cube_file)
     hi_shape[-1] = max_f - min_f
     counter = 0
     xyf_max = hi_shape - empty_cube_dim
