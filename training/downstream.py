@@ -1,5 +1,5 @@
 import numpy as np
-from sofia import readoptions, linker, parametrisation, wcs_coordinates
+from sofia import readoptions, linker, parametrisation
 import pandas as pd
 
 import definitions

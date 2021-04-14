@@ -11,7 +11,7 @@ import torch
 from tqdm.auto import tqdm
 
 # attributes for the dataset generally
-GLOBAL_ATTRIBUTES = {'dim', 'index', 'scale'}
+GLOBAL_ATTRIBUTES = {'dim', 'index', 'scale', 'mean', 'std'}
 
 # attributes only defined in boxes with source
 SOURCE_ATTRIBUTES = {'segmentmap', 'allocated_voxels', 'ra', 'dec', 'hi_size', 'line_flux_integral',
@@ -29,6 +29,8 @@ SPEED_OF_LIGHT = 3e5
 hi_cube_tensor = None
 f0 = None
 scale = []
+mean = []
+std = []
 
 
 def cache_hi_cube(hi_cube_file, min_f0, max_f1):
@@ -38,7 +40,13 @@ def cache_hi_cube(hi_cube_file, min_f0, max_f1):
     hi_cube_tensor = torch.tensor(hi_data_fits[min_f0:max_f1].astype(np.float32), dtype=torch.float32).T
     for l in range(min_f0, max_f1):
         if len(scale) <= l:
-            scale.append(torch.tensor(np.percentile(hi_data_fits[l], [.1, 99.9]), dtype=torch.float32))
+            percentiles = np.percentile(hi_data_fits[l], [.1, 99.9])
+            tmp = np.clip(hi_data_fits[l], *percentiles)
+            tmp = (tmp - percentiles[0]) / (percentiles[1] - percentiles[0])
+
+            scale.append(torch.tensor(percentiles, dtype=torch.float32))
+            mean.append(torch.tensor(tmp.mean(), dtype=torch.float32))
+            std.append(torch.tensor(tmp.std(), dtype=torch.float32))
 
 
 def get_hi_cube_slice(slices: tuple):
@@ -203,7 +211,8 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
 
             if row.id in allocation_dict.keys():
                 batch_counter += 1
-                slices = tuple(map(lambda p: slice(int(row['{}0'.format(p)]), int(row['{}1'.format(p)])), coord_keys))
+                slices = tuple(
+                    map(lambda p: slice(int(row['{}0'.format(p)]), int(row['{}1'.format(p)])), coord_keys))
                 sources_dict = append_common_attributes(sources_dict, hi_cube_file=hi_cube_file, slices=slices)
                 sources_dict = append_source_attributes(sources_dict, row, segmentmap=segmentmap[slices].todense(),
                                                         allocation_dict=allocation_dict)
@@ -213,11 +222,14 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
 
     sources_dict['index'] = len(sources_dict['image'])
     sources_dict['scale'] = scale
+    sources_dict['mean'] = mean
+    sources_dict['std'] = std
 
     return sources_dict, empty_dict
 
 
-def add_empty_boxes(data: dict, hi_cube_file: str, segmentmap: sparse.COO, n_empty_cubes: int, empty_cube_dim: tuple,
+def add_empty_boxes(data: dict, hi_cube_file: str, segmentmap: sparse.COO, n_empty_cubes: int,
+                    empty_cube_dim: tuple,
                     min_f: int,
                     max_f: int):
     hi_shape = get_hi_shape(hi_cube_file)

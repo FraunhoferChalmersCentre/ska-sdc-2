@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from typing import Dict, Tuple, List
 
 import numpy as np
@@ -106,7 +107,7 @@ def merge(*datasets: Dict):
 
 
 def train_val_split(dataset: Dict, train_fraction: float, required_attrs: List[str] = ['image', 'position'],
-                    random_state=np.random):
+                    random_state=np.random.RandomState()):
     train, validation = split(dataset, train_fraction, required_attrs, random_state)
     datsets = (SKADataSet(train, TrainingItemGetter()), SKADataSet(validation, ValidationItemGetter(), random_type=1))
 

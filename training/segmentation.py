@@ -20,9 +20,6 @@ SOFIA_ESTIMATED_ATTRS = {'ra', 'dec', 'line_flux_integral', 'w20', 'HI_size', 'i
 SPEED_OF_LIGHT = 3e5
 
 
-
-
-
 def final_shapes(dim, upper_left, final_shape):
     final_start = (dim * upper_left).astype(np.int32)
     final_end = (dim * upper_left + dim).astype(np.int32)
@@ -49,7 +46,7 @@ class SortedSampler(Sampler):
         return iter(self.sorted_indices)
 
 
-def get_vis_id(dataset, shape, min_allocated, random_state=np.random):
+def get_vis_id(dataset, shape, min_allocated, random_state=np.random.RandomState()):
     vis_id = None
 
     pos = dataset.get_attribute('position')
@@ -125,18 +122,21 @@ class Segmenter(pl.LightningModule):
             'Cross Entropy': self.cross_entropy
         }
 
-    def get_model_input(self, image, position, scale, slices):
+    def get_model_input(self, image, position, scale, mean, std, slices):
         transformed_image = torch.empty(image.shape, device=self.device)
         start = position[:, 0, -1] + slices[:, 0, -1]
         stop = position[:, 0, -1] + slices[:, -1, -1]
 
         for i, (im, start_channel, end_channel) in enumerate(zip(image, start.int(), stop.int())):
             tr_im = im.T.clone()
-            for j, value_span in enumerate(scale[start_channel:end_channel]):
+            for j, (value_span, mu, sigma) in enumerate(
+                    zip(scale[start_channel:end_channel], mean[start_channel:end_channel],
+                        std[start_channel:end_channel])):
                 tr_im[j] = (tr_im[j] - value_span[0]) / (value_span[1] - value_span[0])
+                tr_im[j] = torch.clamp(tr_im[j], 0., 1.)
+                tr_im[j] = (tr_im[j] - mu) / sigma
             transformed_image[i] = tr_im.T
 
-        transformed_image = torch.clamp(transformed_image, 0., 1.)
         return transformed_image.float()
 
     def on_fit_start(self):
@@ -164,8 +164,8 @@ class Segmenter(pl.LightningModule):
 
         input_image = image[slices].to(self.device).view(1, 1, *image[slices].shape)
         slices = torch.tensor([[s.start, s.stop] for s in slices]).T
-        scale = self.validation_set.get_attribute('scale')
-        model_input = self.get_model_input(input_image, position, scale, slices.view(1, *slices.shape))
+        scale, mean, std = tuple(map(lambda t: self.validation_set.get_attribute(t), ('scale', 'mean', 'std')))
+        model_input = self.get_model_input(input_image, position, scale, mean, std, slices.view(1, *slices.shape))
         prediction = nn.Sigmoid()(self.model(model_input)).squeeze()
         self._log_cross_sections(prediction, self.validation_set[self.vis_id]['pa'], 'Prediction')
 
@@ -204,9 +204,9 @@ class Segmenter(pl.LightningModule):
             model_input[i] = validation_cube[(slice(None), slice(None), *slices)]
             all_slices[i] = torch.tensor([[s.start, s.stop] for s in slices]).T
 
-        scale = self.validation_set.get_attribute('scale')
+        scale, mean, std = tuple(map(lambda t: self.validation_set.get_attribute(t), ('scale', 'mean', 'std')))
         position = torch.repeat_interleave(position, len(upper_lefts[0]), 0)
-        x_batch = self.get_model_input(model_input, position, scale, all_slices)
+        x_batch = self.get_model_input(model_input, position, scale, mean, std, all_slices)
         model_out = self.model(x_batch)
 
         for i, upper_left in enumerate(zip(*upper_lefts)):
@@ -245,12 +245,12 @@ class Segmenter(pl.LightningModule):
         # It is independent of forward
         x, y = batch[self.x_key], batch[self.y_key]
 
-        scale = self.training_set.get_attribute('scale')
-        x_batch = self.get_model_input(batch[self.x_key], batch['position'], scale, batch['slices'])
+        scale, mean, std = tuple(map(lambda t: self.validation_set.get_attribute(t), ('scale', 'mean', 'std')))
+        x_batch = self.get_model_input(batch[self.x_key], batch['position'], scale, mean, std, batch['slices'])
         y_hat = self.model(x_batch)
         loss = self.loss_fct(y_hat, y)
         # Logging to TensorBoard by default
-        self.log('train_loss', loss, on_epoch=True)
+        self.log('train_loss', loss, on_epoch=True, on_step=False)
 
         return loss
 
@@ -284,7 +284,7 @@ class Segmenter(pl.LightningModule):
         clipped_segmap[0, 0] = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
 
         for surrogate, f in self.surrogates.items():
-            self.log(surrogate, f(mask, clipped_segmap.float()), on_step=True, on_epoch=True)
+            self.log(surrogate, f(model_out, clipped_segmap.float()), on_step=True, on_epoch=True)
 
         for metric, f in self.pixel_metrics.items():
             f(mask.int().view(-1), clipped_segmap.int().view(-1))
