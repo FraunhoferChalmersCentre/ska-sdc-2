@@ -14,10 +14,24 @@ training:
   target:
     smoothing_fwhm: 0 # FWHM in arcsec of Gaussian for smoothing segmap. 7 according to data description, 0 = no smoothing.
     min_value: .1 # Minimum voxel value in final segmentmap used for training
-    padding: 0.5 # Padding around minor axis as relative length of major axis. 0 is X-shape segmentmap, 1 means full cylinder
+    padding: 1 # Padding around minor axis as relative length of major axis. 0 is X-shape segmentmap, 1 means full cylinder
   cube_size:
     spatial: 32
     freq: 32
+
+constants:
+  speed_of_light: 299792.458
+  h1_rest_freq: 1420000000.0
+
+scoring:
+  threshold:
+    'pos': .3
+    'hi_size': .3
+    'line_flux_integral': .1
+    'central_freq': .3
+    'pa': 10.
+    'i': 10.
+    'w20': .3
 
 torch:
   num_workers: 0 # Ignored if CPU is used, larger values require more RAM

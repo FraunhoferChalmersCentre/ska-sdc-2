@@ -8,12 +8,14 @@ from tqdm.auto import tqdm
 from utils.data.splitting import merge
 
 
-def read_splitted_dataset(directory: str):
+def read_splitted_dataset(directory: str, limit_files: int = None):
     files = glob.glob(directory + '/*.pt')
-    random.shuffle(files)
+    #random.shuffle(files)
 
     dataset_splits_dict = dict()
-    for f in tqdm(files):
+    for i, f in enumerate(tqdm(files)):
+        if limit_files and i >= limit_files:
+            break
         dataset_splits_dict[f] = torch.load(f)
     dataset_splits_dict = OrderedDict(sorted(dataset_splits_dict.items(), key=lambda x: x[0]))
 

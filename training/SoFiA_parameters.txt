@@ -37,10 +37,10 @@ steps.doOptical                 =       false
 
 import.inFile                   =       data/subcube_225_channels.fits
 import.invertData               =       false
-import.weightsFile              =       
-import.maskFile                 =       
+import.weightsFile              =
+import.maskFile                 =
 import.sources                  =       []
-import.weightsFunction          =       
+import.weightsFunction          =
 import.subcube                  =       []
 import.subcubeMode              =       pixel
 
@@ -48,12 +48,12 @@ import.subcubeMode              =       pixel
 # Flagging module
 
 flag.regions                    =       []
-flag.file                       =       
+flag.file                       =
 
 
 # Optical finder module
 
-optical.sourceCatalogue         =       
+optical.sourceCatalogue         =
 optical.spatSize                =       0.01
 optical.specSize                =       1e+5
 optical.storeMultiCat           =       false
@@ -113,7 +113,7 @@ SCfind.rmsMode                  =       negative
 SCfind.fluxRange                =       all
 SCfind.kernels                  =       [[0, 0, 0, 'b'], [0, 0, 3, 'b'], [0, 0, 7, 'b'], [0, 0, 15, 'b'], [3, 3, 0, 'b'], [3, 3, 3, 'b'], [3, 3, 7, 'b'], [3, 3, 15, 'b'], [6, 6, 0, 'b'], [6, 6, 3, 'b'], [6, 6, 7, 'b'], [6, 6, 15, 'b']]
 SCfind.kernelUnit               =       pixel
-SCfind.verbose                  =       false
+SCfind.verbose                  =       true
 
 
 # CNHI finder module
@@ -123,7 +123,7 @@ CNHI.qReq                       =       3.8
 CNHI.minScale                   =       5
 CNHI.maxScale                   =       -1
 CNHI.medianTest                 =       true
-CNHI.verbose                    =       0
+CNHI.verbose                    =       1
 
 
 # Threshold finder module
@@ -140,18 +140,18 @@ threshold.verbose               =       false
 merge.radiusX                   =       3
 merge.radiusY                   =       3
 merge.radiusZ                   =       3
-merge.minSizeX                  =       3
-merge.minSizeY                  =       3
+merge.minSizeX                  =       2
+merge.minSizeY                  =       2
 merge.minSizeZ                  =       2
 merge.maxSizeX                  =       -1
 merge.maxSizeY                  =       -1
 merge.maxSizeZ                  =       -1
-merge.minVoxels                 =       1
+merge.minVoxels                 =       3
 merge.maxVoxels                 =       -1
-merge.minLoS                    =       1
+merge.minLoS                    =       -1
 merge.maxLoS                    =       -1
 merge.minFill                   =       -1
-merge.maxFill                   =       2
+merge.maxFill                   =       -1
 merge.minIntens                 =       -9e+30
 merge.maxIntens                 =       9e+30
 merge.positivity                =       false
@@ -162,7 +162,7 @@ merge.positivity                =       false
 parameters.getUncertainties     =       false
 parameters.fitBusyFunction      =       false
 parameters.optimiseMask         =       false
-parameters.dilateMask           =       false
+parameters.dilateMask           =       true
 parameters.dilateThreshold      =       0.02
 parameters.dilatePixMax         =       10
 parameters.dilateChanMax        =       3
@@ -187,8 +187,8 @@ reliability.makePlot            =       false
 
 writeCat.overwrite              =       true
 writeCat.compress               =       false
-writeCat.outputDir              =       
-writeCat.basename               =       
+writeCat.outputDir              =
+writeCat.basename               =
 writeCat.writeASCII             =       true
 writeCat.writeXML               =       false
 writeCat.writeSQL               =       false

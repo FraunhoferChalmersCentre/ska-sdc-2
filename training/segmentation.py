@@ -1,7 +1,6 @@
 from typing import Any, List
 from itertools import starmap
 
-import pandas as pd
 import pytorch_lightning as pl
 import torch
 from torch import nn
@@ -10,14 +9,11 @@ import torchvision.transforms.functional as TF
 import numpy as np
 from pytorch_toolbelt import losses
 from astropy.io import fits
-from astropy.wcs import WCS
+import matplotlib.pyplot as plt
 
-from training.downstream import extract_sources
+from training.downstream import extract_sources, parametrise_sources
 from utils.data.ska_dataset import AbstractSKADataset
-
-SOFIA_ESTIMATED_ATTRS = {'ra', 'dec', 'line_flux_integral', 'w20', 'HI_size', 'i', 'pa'}
-
-SPEED_OF_LIGHT = 3e5
+from utils.scoring import score_source, parametrisation_validation, ANGLE_SCATTER_ATTRS, LINEAR_SCATTER_ATTRS
 
 
 def final_shapes(dim, upper_left, final_shape):
@@ -46,7 +42,7 @@ class SortedSampler(Sampler):
         return iter(self.sorted_indices)
 
 
-def get_vis_id(dataset, shape, min_allocated, random_state=np.random.RandomState()):
+def get_random_vis_id(dataset, shape, min_allocated, random_state=np.random.RandomState()):
     vis_id = None
 
     pos = dataset.get_attribute('position')
@@ -64,10 +60,6 @@ def get_vis_id(dataset, shape, min_allocated, random_state=np.random.RandomState
             vis_id = random_id
 
     return vis_id
-
-
-def get_metrics():
-    return
 
 
 class Segmenter(pl.LightningModule):
@@ -206,7 +198,7 @@ class Segmenter(pl.LightningModule):
 
         scale, mean, std = tuple(map(lambda t: self.validation_set.get_attribute(t), ('scale', 'mean', 'std')))
         position = torch.repeat_interleave(position, len(upper_lefts[0]), 0)
-        x_batch = self.get_model_input(model_input, position, scale, mean, std, all_slices)
+        x_batch = self.get_model_input(model_input.clone(), position, scale, mean, std, all_slices)
         model_out = self.model(x_batch)
 
         for i, upper_left in enumerate(zip(*upper_lefts)):
@@ -221,25 +213,6 @@ class Segmenter(pl.LightningModule):
 
         return final_cube.view(1, 1, *final_cube.shape)
 
-    def parametrise_sources(self, input_cube, mask, position, padding):
-        if mask.sum() == 0.:
-            return pd.DataFrame()
-
-        input_cube, mask, position = tuple(map(lambda t: t.detach().cpu().numpy(), (input_cube, mask, position)))
-
-        df = extract_sources(input_cube, mask, self.header['bunit'])
-
-        if len(df) > 0:
-            # cube_spans = tuple(
-            #    [slice(int(pos[0] + pad), int(pos[1] - pad)) for pos, pad in zip(position.T, padding)])
-            wcs = WCS(self.header)
-            df[['ra', 'dec', 'central_freq']] = wcs.all_pix2world(
-                np.array(df[['z_geo', 'y_geo', 'x_geo']] + position[0, 0] + padding, dtype=np.float32), 0)
-            df['w20'] = df['w20'] * SPEED_OF_LIGHT * self.header['CDELT3'] / self.header['RESTFREQ']
-            df['f_int'] = df['f_int'] * self.header['CDELT3'] / (np.pi * (7 / 2.8) ** 2 / (4 * np.log(2)))
-
-        return df
-
     def training_step(self, batch, batch_idx):
         # training_step defined the train loop.
         # It is independent of forward
@@ -253,22 +226,6 @@ class Segmenter(pl.LightningModule):
         self.log('train_loss', loss, on_epoch=True, on_step=False)
 
         return loss
-
-    def parametrisation_validation(self, parametrized_df, batch, has_source):
-        if has_source:
-            # There is a source in this
-            for i, row in parametrized_df.iterrows():
-                predicted_pos = np.array([row.ra, row.dec])
-                true_pos = np.array([batch['ra'].cpu().numpy(), batch['dec'].cpu().numpy()]).flatten()
-
-                line_width_freq = self.header['RESTFREQ'] * batch['w20'].cpu().numpy() / SPEED_OF_LIGHT
-                if np.linalg.norm(predicted_pos - true_pos) * 3600 < batch['hi_size'].cpu().numpy() / 2 and np.abs(
-                        batch['central_freq'].cpu().numpy() - row['central_freq']) < line_width_freq / 2:
-                    return True
-            return False
-        else:
-            # No sources in this batch
-            return len(parametrized_df) > 0
 
     def validation_step(self, batch, batch_idx):
         # IMPORTANT: Single batch assumed when validating
@@ -291,11 +248,11 @@ class Segmenter(pl.LightningModule):
             self.log('pixel_{}'.format(metric), f, on_epoch=True)
 
         has_source = batch_idx < self.validation_set.get_attribute('index')
-        clipped_input = torch.empty(model_out.shape, device=self.device).squeeze()
-        clipped_input[:, :, :] = batch['image'][0, 0][[slice(p, - p) for p in padding]]
+        clipped_input = torch.empty(model_out.shape, device=self.device)
+        clipped_input[0, 0] = batch['image'][0, 0][[slice(p, - p) for p in padding]]
 
-        parametrized_df = self.parametrise_sources(clipped_input, mask.squeeze(), batch['position'], padding)
-        sofia_out = self.parametrisation_validation(parametrized_df, batch, has_source)
+        parametrized_df = parametrise_sources(self.header, clipped_input, mask, batch['position'], padding)
+        sofia_out = parametrisation_validation(self.header, parametrized_df, batch, has_source)
 
         has_source, sofia_out = tuple(
             map(lambda t: torch.tensor(t, device=self.device).view(-1), (has_source, sofia_out)))
@@ -304,8 +261,47 @@ class Segmenter(pl.LightningModule):
             f(sofia_out, has_source)
             self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
-    def validation_epoch_end(self, validation_step_outputs):
+        if has_source and sofia_out:
+            n_matched, scores, predictions = score_source(self.header, batch, parametrized_df)
+
+            self.log('score_n_matches', n_matched, on_step=True, on_epoch=True)
+
+            for k, v in scores.items():
+                self.log('score_' + k, v, on_step=True, on_epoch=True)
+
+            self.log('score_total', np.mean([scores[k] for k in scores.keys()]), on_step=True, on_epoch=True)
+
+            return predictions
+
+        return None
+
+    def validation_epoch_start(self):
         pass
+
+    def validation_epoch_end(self, validation_step_outputs):
+        matched_outputs = {k: [v[k] for v in validation_step_outputs] for k in validation_step_outputs[0].keys()}
+
+        for k, v in matched_outputs.items():
+            if len(v) > 0:
+                pred_arr = np.array(v)
+                fig = plt.figure()
+
+                if k in ANGLE_SCATTER_ATTRS:
+                    pred_arr = np.deg2rad(pred_arr)
+                    plt.scatter(np.cos(pred_arr[:, 0] - pred_arr[:, 1]), np.sin(pred_arr[:, 0] - pred_arr[:, 1]), c='r',
+                                alpha=.1)
+
+                    v = np.linspace(0, 2 * np.pi)
+                    plt.plot(np.cos(v), np.sin(v), alpha=.1)
+                elif k in LINEAR_SCATTER_ATTRS:
+                    plt.scatter(pred_arr[:, 0], pred_arr[:, 1])
+                    plt.xlabel('Prediction')
+                    plt.ylabel('True value')
+                    l = [pred_arr[:, 0].min(), pred_arr[:, 0].max()]
+                    plt.plot(l, l, 'r')
+
+                plt.gca().set_aspect('equal', adjustable='box')
+                self.logger.experiment.add_figure('Scatter/' + k, fig, self.global_step)
 
     def training_epoch_end(self, outputs: List[Any]) -> None:
         self.log_prediction_image()

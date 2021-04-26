@@ -11,6 +11,8 @@ import torch
 from tqdm.auto import tqdm
 
 # attributes for the dataset generally
+from definitions import config
+
 GLOBAL_ATTRIBUTES = {'dim', 'index', 'scale', 'mean', 'std'}
 
 # attributes only defined in boxes with source
@@ -22,9 +24,6 @@ EMPTY_ATTRIBUTES = {}
 
 # attributes defined for all boxes
 COMMON_ATTRIBUTES = {'image', 'position'}
-
-H1_REST_FREQ = 1.420e9
-SPEED_OF_LIGHT = 3e5
 
 hi_cube_tensor = None
 f0 = None
@@ -59,7 +58,7 @@ def get_hi_cube_slice(slices: tuple):
 
 
 def freq_boundary(central_freq, w20):
-    bw = H1_REST_FREQ * w20 / SPEED_OF_LIGHT
+    bw = config['constants']['h1_rest_freq'] * w20 / config['constants']['speed_of_light']
     upper_freq = central_freq - bw / 2
     lower_freq = central_freq + bw / 2
     return lower_freq, upper_freq

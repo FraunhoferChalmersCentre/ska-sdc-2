@@ -1,10 +1,11 @@
 import numpy as np
+from astropy.wcs import WCS
 from sofia import readoptions, linker, parametrisation
 import pandas as pd
 
-import definitions
+from definitions import ROOT_DIR, config
 
-default_file = definitions.ROOT_DIR + '/training/SoFiA_parameters.txt'
+default_file = ROOT_DIR + '/training/SoFiA_parameters.txt'
 Parameters = readoptions.readPipelineOptions(default_file)
 
 catParNamesBase = (
@@ -34,9 +35,9 @@ catParNames_tmp = ("n_pix", "n_chan", "n_los", "snr_min", "snr_max", "snr_sum", 
 
 
 def remove_non_reliable(objects, mask, catParNames, catParFormt, catParUnits):
-    reliable = list(np.array(objects)[:, 0].astype(int))
-    #reliable = list(np.array(objects)[np.array(objects)[:, catParNamesBase.index('snr_sum')] > 0, 0].astype(
-    #    int))  # select all positive sources
+    # reliable = list(np.array(objects)[:, 0].astype(int))
+    reliable = list(np.array(objects)[np.array(objects)[:, catParNamesBase.index('snr_sum')] > 0, 0].astype(
+        int))  # select all positive sources
 
     objects, catParNames, catParUnits, catParFormt = remove_cols(objects, catParNames, catParFormt, catParUnits)
     # Make sure that reliable is sorted
@@ -107,13 +108,15 @@ def remove_cols(objects, catParNames, catParFormt, catParUnits):
 
 
 def extract_sources(cube: np.ndarray, mask: np.ndarray, dunits):
-    objects, mask = linker.link_objects(cube, list(), mask, Parameters["merge"]["radiusX"],
+    if Parameters["merge"]["positivity"]:
+        mask[cube < 0.0] = 0
+
+    objects, mask = linker.link_objects(cube.copy(), [], mask.copy(), Parameters["merge"]["radiusX"],
                                         Parameters["merge"]["radiusY"], Parameters["merge"]["radiusZ"],
                                         Parameters["merge"]["minSizeX"], Parameters["merge"]["minSizeY"],
                                         Parameters["merge"]["minSizeZ"], Parameters["merge"]["maxSizeX"],
                                         Parameters["merge"]["maxSizeY"], Parameters["merge"]["maxSizeZ"],
                                         Parameters["merge"]["minVoxels"], Parameters["merge"]["maxVoxels"],
-                                        Parameters["merge"]["minLoS"], Parameters["merge"]["maxLoS"],
                                         Parameters["merge"]["minFill"], Parameters["merge"]["maxFill"],
                                         Parameters["merge"]["minIntens"], Parameters["merge"]["maxIntens"])
 
@@ -123,12 +126,61 @@ def extract_sources(cube: np.ndarray, mask: np.ndarray, dunits):
     objects, catParNames, catParUnits, catParFormt, mask = remove_non_reliable(objects, mask, catParNamesBase,
                                                                                catParFormtBase, catParUnitsBase)
 
-    if len(objects) == 0:
+    if Parameters["parameters"]["dilateMask"]: mask, objects = parametrisation.dilate(cube, mask, objects,
+                                                                                      catParNames, Parameters)
+
+    try:
+        np_Cube, mask, objects, catParNames, catParFormt, catParUnits = parametrisation.parametrise(
+            cube, mask, objects, catParNames, catParFormt, catParUnits, Parameters, dunits)
+    except ValueError:
         return pd.DataFrame()
 
-    mask, objects = parametrisation.dilate(cube, mask, objects, catParNames, Parameters)
+    df = pd.DataFrame(objects, columns=catParNames)
+    fluxes = [cube[mask == id].sum() for id in df['id']]
+    df['est_flux'] = fluxes
 
-    np_Cube, mask, objects, catParNames, catParFormt, catParUnits = parametrisation.parametrise(
-        cube, mask, objects, catParNames, catParFormt, catParUnits, Parameters, dunits)
+    return df
 
-    return pd.DataFrame(objects, columns=catParNames)
+
+def parametrise_sources(header, input_cube, mask, position, padding):
+    if mask.sum() == 0.:
+        return pd.DataFrame()
+
+    input_cube, mask, position = tuple(
+        map(lambda t: t.squeeze().detach().cpu().numpy(), (input_cube, mask, position)))
+
+    df = extract_sources(input_cube.T, mask.T, header['bunit'])
+
+    if len(df) > 0:
+        wcs = WCS(header)
+        shift = np.array([pos + pad for pos, pad in zip(position[0], padding)])
+        df[['ra', 'dec', 'central_freq']] = wcs.all_pix2world(
+            np.array(df[['x_geo', 'y_geo', 'z_geo']] + shift, dtype=np.float32), 0)
+
+        if 'n_chan' in df.columns:
+            df['w20'] = df['n_chan'] * config['constants']['speed_of_light'] * header['CDELT3'] / header[
+                'RESTFREQ']
+        elif 'w20' in df.columns:
+            df['w20'] = df['w20'] * config['constants']['speed_of_light'] * header['CDELT3'] / header[
+                'RESTFREQ']
+
+        if 'est_flux' in df.columns:
+            df['line_flux_integral'] = df['est_flux'] * header['CDELT3'] / (
+                    np.pi * (7 / 2.8) ** 2 / (4 * np.log(2)))
+        elif 'f_int' in df.columns:
+            df['line_flux_integral'] = df['f_int'] * header['CDELT3'] / (np.pi * (7 / 2.8) ** 2 / (4 * np.log(2)))
+
+        if 'ell_maj' in df.columns:
+            df['hi_size'] = df['ell_maj'] * 2.8
+            df['hi_size'][df['hi_size'].isna() | (df['hi_size'] == 0)] = np.exp(
+                np.log(df['line_flux_integral'][df['hi_size'].isna() | (df['hi_size'] == 0)] * .45 + .77))
+
+        if 'ell_maj' and 'ell_min' in df.columns:
+            df['i'] = np.rad2deg(
+                np.arccos(np.sqrt(((df['ell_min'] / df['ell_maj']) ** 2 - .2 ** 2) / (1 - .2 ** 2))))
+            df['i'] = df['i'].fillna(45)
+
+        if 'ell_pa' in df.columns:
+            df['pa'] = df['ell_pa'].fillna(0)
+
+    return df
