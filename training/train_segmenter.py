@@ -10,23 +10,13 @@ import numpy as np
 from pytorch_toolbelt import losses
 from astropy.io import fits
 import matplotlib.pyplot as plt
+from astropy.wcs import WCS
+from pipeline.segmenter import BaseSegmenter
+from utils.clip import partition_overlap, cube_evaluation, connect_outputs
 
-from training.downstream import extract_sources, parametrise_sources
+from pipeline.downstream import extract_sources, parametrise_sources
 from utils.data.ska_dataset import AbstractSKADataset
 from utils.scoring import score_source, parametrisation_validation, ANGLE_SCATTER_ATTRS, LINEAR_SCATTER_ATTRS
-
-
-def final_shapes(dim, upper_left, final_shape):
-    final_start = (dim * upper_left).astype(np.int32)
-    final_end = (dim * upper_left + dim).astype(np.int32)
-
-    ext_padding = np.zeros(3, dtype=np.int32)
-
-    for i, (e, s) in enumerate(zip(final_end, final_shape)):
-        ext_padding[i] = e - min(e, s)
-        final_end[i] = min(e, s)
-
-    return final_start, final_end, ext_padding
 
 
 class SortedSampler(Sampler):
@@ -62,12 +52,12 @@ def get_random_vis_id(dataset, shape, min_allocated, random_state=np.random.Rand
     return vis_id
 
 
-class Segmenter(pl.LightningModule):
-    def __init__(self, model: nn.Module, loss_fct: Any, training_set: AbstractSKADataset,
+class TrainSegmenter(BaseSegmenter):
+    def __init__(self, base: BaseSegmenter, loss_fct: Any, training_set: AbstractSKADataset,
                  validation_set: AbstractSKADataset, header: fits.Header, batch_size=128, x_key='image',
                  y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold=None, lr=1e-2,
                  momentum=.9):
-        super().__init__()
+        super().__init__(base.model, base.scale, base.mean, base.std)
         self.header = header
         self.batch_size = batch_size
         self.validation_set = validation_set
@@ -75,7 +65,6 @@ class Segmenter(pl.LightningModule):
         self.y_key = y_key
         self.x_key = x_key
         self.loss_fct = loss_fct
-        self.model = model
         self.vis_rotations = vis_rotations
         self.vis_max_angle = vis_max_angle
         self.lr = lr
@@ -114,23 +103,6 @@ class Segmenter(pl.LightningModule):
             'Cross Entropy': self.cross_entropy
         }
 
-    def get_model_input(self, image, position, scale, mean, std, slices):
-        transformed_image = torch.empty(image.shape, device=self.device)
-        start = position[:, 0, -1] + slices[:, 0, -1]
-        stop = position[:, 0, -1] + slices[:, -1, -1]
-
-        for i, (im, start_channel, end_channel) in enumerate(zip(image, start.int(), stop.int())):
-            tr_im = im.T.clone()
-            for j, (value_span, mu, sigma) in enumerate(
-                    zip(scale[start_channel:end_channel], mean[start_channel:end_channel],
-                        std[start_channel:end_channel])):
-                tr_im[j] = (tr_im[j] - value_span[0]) / (value_span[1] - value_span[0])
-                tr_im[j] = torch.clamp(tr_im[j], 0., 1.)
-                tr_im[j] = (tr_im[j] - mu) / sigma
-            transformed_image[i] = tr_im.T
-
-        return transformed_image.float()
-
     def on_fit_start(self):
         self.log_image()
         self.log_prediction_image()
@@ -150,15 +122,11 @@ class Segmenter(pl.LightningModule):
     def log_prediction_image(self):
         image = self.validation_set.get_attribute(self.x_key)[self.vis_id].squeeze()
         position = self.validation_set.get_attribute('position')[self.vis_id]
-        position = position.view(1, *position.shape)
         slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d), int(s / 2 - d) + 2 * d),
                                zip(image.shape, self.validation_set.get_attribute('dim'))))
-
         input_image = image[slices].to(self.device).view(1, 1, *image[slices].shape)
-        slices = torch.tensor([[s.start, s.stop] for s in slices]).T
-        scale, mean, std = tuple(map(lambda t: self.validation_set.get_attribute(t), ('scale', 'mean', 'std')))
-        model_input = self.get_model_input(input_image, position, scale, mean, std, slices.view(1, *slices.shape))
-        prediction = nn.Sigmoid()(self.model(model_input)).squeeze()
+        f_channels = torch.tensor([[position[0, -1] + slices[-1].start, position[0, -1] + slices[-1].stop]])
+        prediction = nn.Sigmoid()(self(input_image, f_channels)).squeeze()
         self._log_cross_sections(prediction, self.validation_set[self.vis_id]['pa'], 'Prediction')
 
     def _log_cross_sections(self, cube: torch.Tensor, pa: float, tag: str):
@@ -173,54 +141,17 @@ class Segmenter(pl.LightningModule):
             log_tag = tag + '/{:.1f}'.format(i * self.vis_max_angle / self.vis_rotations)
             self.logger.experiment.add_image(log_tag, cropped[:, :, center].unsqueeze(0), self.global_step)
 
-    def validation_output(self, validation_cube, dim, padding, position):
-        # Prepare output cubes (without padding in input)
-        final_shape = tuple(starmap(lambda s, p: s - 2 * p, zip(validation_cube.shape[2:], padding)))
-        final_cube = torch.empty(final_shape, device=self.device)
-
-        # Get number of strides needed in each dimension
-        patches_each_dim = tuple(
-            starmap(lambda i, f: np.ceil(f / i), zip(dim, final_shape)))
-        meshes = np.meshgrid(*map(np.arange, patches_each_dim))
-        upper_lefts = tuple(map(np.ravel, meshes))
-
-        model_input = torch.empty(len(upper_lefts[0]), 1, *[d + 2 * p for d, p in zip(dim, padding)],
-                                  device=self.device)
-
-        all_slices = torch.empty(len(upper_lefts[0]), 2, 3, device=self.device)
-        for i, upper_left in enumerate(zip(*upper_lefts)):
-            final_start, final_end, ext_padding = final_shapes(dim, upper_left, final_shape)
-
-            slices = tuple(
-                starmap(lambda s, e, d, p: slice(s - p, e + d), zip(final_start, final_end, dim, ext_padding)))
-            model_input[i] = validation_cube[(slice(None), slice(None), *slices)]
-            all_slices[i] = torch.tensor([[s.start, s.stop] for s in slices]).T
-
-        scale, mean, std = tuple(map(lambda t: self.validation_set.get_attribute(t), ('scale', 'mean', 'std')))
-        position = torch.repeat_interleave(position, len(upper_lefts[0]), 0)
-        x_batch = self.get_model_input(model_input.clone(), position, scale, mean, std, all_slices)
-        model_out = self.model(x_batch)
-
-        for i, upper_left in enumerate(zip(*upper_lefts)):
-            final_start, final_end, ext_padding = final_shapes(dim, upper_left, final_shape)
-
-            padding_slices = tuple(starmap(lambda p, e: slice(p + e, -p), zip(padding, ext_padding)))
-            padding_slices = (i, slice(None), *padding_slices)
-
-            final_slices = tuple(starmap(lambda s, e: slice(s, e), zip(final_start, final_end)))
-
-            final_cube[final_slices] = model_out[padding_slices]
-
-        return final_cube.view(1, 1, *final_cube.shape)
-
     def training_step(self, batch, batch_idx):
         # training_step defined the train loop.
         # It is independent of forward
         x, y = batch[self.x_key], batch[self.y_key]
 
-        scale, mean, std = tuple(map(lambda t: self.validation_set.get_attribute(t), ('scale', 'mean', 'std')))
-        x_batch = self.get_model_input(batch[self.x_key], batch['position'], scale, mean, std, batch['slices'])
-        y_hat = self.model(x_batch)
+        f_channels = torch.empty((x.shape[0], 2), device=self.device)
+        for i in range(x.shape[0]):
+            f_channels[i, 0] = batch['position'][i, 0, -1] + batch['slices'][i][0][-1]
+            f_channels[i, 1] = batch['position'][i, 0, -1] + batch['slices'][i][1][-1]
+
+        y_hat = self(x, f_channels)
         loss = self.loss_fct(y_hat, y)
         # Logging to TensorBoard by default
         self.log('train_loss', loss, on_epoch=True, on_step=False)
@@ -231,10 +162,18 @@ class Segmenter(pl.LightningModule):
         # IMPORTANT: Single batch assumed when validating
 
         # Compute padding
-        dim = np.array(self.validation_set.get_attribute('dim'))
-        padding = (dim / 2).astype(np.int32)
+        dim = (np.array(self.validation_set.get_attribute('dim'))*2).astype(np.int32)
+        padding = (dim / 4).astype(np.int32)
 
-        model_out = self.validation_output(batch['image'], dim, padding, batch['position'])
+        overlap_slices_partition, overlaps_partition = partition_overlap(torch.squeeze(batch['image']).shape, dim,
+                                                                         padding)
+
+        outputs, efficient_slices = cube_evaluation(torch.squeeze(batch['image']), dim, padding,
+                                                    torch.squeeze(batch['position']), overlap_slices_partition[0],
+                                                    overlaps_partition[0], self)
+
+        model_out = connect_outputs(torch.squeeze(batch['image']), outputs, efficient_slices, padding)
+        model_out = model_out.view(1, 1, *model_out.shape).to(self.device)
         mask = torch.round(nn.Sigmoid()(model_out))
 
         clipped_segmap = torch.empty(model_out.shape, device=self.device)
@@ -311,9 +250,6 @@ class Segmenter(pl.LightningModule):
 
     def val_dataloader(self):
         return DataLoader(self.validation_set, batch_size=1, sampler=SortedSampler(self.validation_set))
-
-    def forward(self, x):
-        return self.model(x)
 
     def configure_optimizers(self):
         return torch.optim.SGD(self.parameters(), lr=self.lr, momentum=self.momentum)

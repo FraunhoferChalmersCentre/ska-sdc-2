@@ -35,3 +35,13 @@ scoring:
 
 torch:
   num_workers: 0 # Ignored if CPU is used, larger values require more RAM
+
+charateristic_parameters:
+  - ra
+  - dec
+  - hi_size
+  - line_flux_integral
+  - central_freq
+  - pa
+  - i
+  - w20
