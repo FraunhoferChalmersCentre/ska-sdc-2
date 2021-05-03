@@ -218,6 +218,8 @@ class TrainSegmenter(BaseSegmenter):
         pass
 
     def validation_epoch_end(self, validation_step_outputs):
+        if len(validation_step_outputs) == 0:
+            return
         matched_outputs = {k: [v[k] for v in validation_step_outputs] for k in validation_step_outputs[0].keys()}
 
         for k, v in matched_outputs.items():

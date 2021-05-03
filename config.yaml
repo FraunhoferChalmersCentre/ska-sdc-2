@@ -36,7 +36,7 @@ scoring:
 torch:
   num_workers: 0 # Ignored if CPU is used, larger values require more RAM
 
-charateristic_parameters:
+characteristic_parameters:
   - ra
   - dec
   - hi_size
