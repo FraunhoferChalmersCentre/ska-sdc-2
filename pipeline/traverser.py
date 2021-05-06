@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pipeline.segmenter import BaseSegmenter
-from pipeline.downstream import extract_sources
+from pipeline.downstream import parametrise_sources
 from definitions import config
 from astropy.io import fits
 import pandas as pd
@@ -45,9 +45,9 @@ class EvaluationTraverser(ModelTraverser):
         self.gpu_memory = gpu_memory
         header = fits.getheader(fits_file, ignore_blank=True)
         self.cube_shape = np.array(list(map(lambda x: header[x], ['NAXIS1', 'NAXIS2', 'NAXIS3'])))
-        self.bunit = header['bunit']
+        self.header = header
         self.data_cache = CubeCache(fits_file)
-        slices_partition = partition_expanding(self.cube_shape, desired_dim, cnn_padding+sofia_padding)
+        slices_partition = partition_expanding(self.cube_shape, desired_dim, cnn_padding + sofia_padding)
         self.slices_partition = np.array_split(slices_partition[0], self.n_parallel)[self.i]
 
     def __len__(self):
@@ -74,7 +74,8 @@ class EvaluationTraverser(ModelTraverser):
             # Convert to numpy for Sofia
             mask = mask.numpy().T
             hi_cube = hi_cube_tensor.numpy().T
-            prediction = extract_sources(mask, hi_cube, self.bunit)
+            partition_position = np.array([s.start for s in slices])
+            prediction = parametrise_sources(self.header, hi_cube, mask, partition_position)
 
             # Filter Desired Characteristics and Non-edge-padding
             df = remove_non_edge_padding(slices, self.cube_shape, self.cnn_padding, self.sofia_padding, df)

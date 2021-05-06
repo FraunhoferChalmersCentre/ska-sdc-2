@@ -1,6 +1,8 @@
+from datetime import datetime
 from typing import Any, List
 from itertools import starmap
 
+import pandas as pd
 import pytorch_lightning as pl
 import torch
 from torch import nn
@@ -11,10 +13,12 @@ from pytorch_toolbelt import losses
 from astropy.io import fits
 import matplotlib.pyplot as plt
 from astropy.wcs import WCS
+
+from definitions import config
 from pipeline.segmenter import BaseSegmenter
 from utils.clip import partition_overlap, cube_evaluation, connect_outputs
 
-from pipeline.downstream import extract_sources, parametrise_sources
+from pipeline.downstream import parametrise_sources
 from utils.data.ska_dataset import AbstractSKADataset
 from utils.scoring import score_source, parametrisation_validation, ANGLE_SCATTER_ATTRS, LINEAR_SCATTER_ATTRS
 
@@ -162,7 +166,7 @@ class TrainSegmenter(BaseSegmenter):
         # IMPORTANT: Single batch assumed when validating
 
         # Compute padding
-        dim = (np.array(self.validation_set.get_attribute('dim'))*2).astype(np.int32)
+        dim = (np.array(self.validation_set.get_attribute('dim')) * 2).astype(np.int32)
         padding = (dim / 4).astype(np.int32)
 
         overlap_slices_partition, overlaps_partition = partition_overlap(torch.squeeze(batch['image']).shape, dim,
@@ -190,7 +194,7 @@ class TrainSegmenter(BaseSegmenter):
         clipped_input = torch.empty(model_out.shape, device=self.device)
         clipped_input[0, 0] = batch['image'][0, 0][[slice(p, - p) for p in padding]]
 
-        parametrized_df = parametrise_sources(self.header, clipped_input, mask, batch['position'], padding)
+        parametrized_df = parametrise_sources(self.header, clipped_input.T, mask.T, batch['position'], padding)
         sofia_out = parametrisation_validation(self.header, parametrized_df, batch, has_source)
 
         has_source, sofia_out = tuple(
@@ -220,25 +224,31 @@ class TrainSegmenter(BaseSegmenter):
     def validation_epoch_end(self, validation_step_outputs):
         if len(validation_step_outputs) == 0:
             return
-        matched_outputs = {k: [v[k] for v in validation_step_outputs] for k in validation_step_outputs[0].keys()}
 
-        for k, v in matched_outputs.items():
-            if len(v) > 0:
-                pred_arr = np.array(v)
+        if config['training']['save_plots']:
+            predictions = {k + '_pred': [v[k][0] for v in validation_step_outputs] for k in
+                           validation_step_outputs[0].keys()}
+            true_values = {k + '_true': [v[k][1] for v in validation_step_outputs] for k in
+                           validation_step_outputs[0].keys()}
+            df = pd.DataFrame({**predictions, **true_values})
+            df.to_csv('result_{}.csv'.format(datetime.now().strftime("%m%d%Y_%H%M%S")))
+
+            for k in validation_step_outputs[0].keys():
+                pred_arr = df[[k + '_pred', k + '_true']]
                 fig = plt.figure()
 
                 if k in ANGLE_SCATTER_ATTRS:
                     pred_arr = np.deg2rad(pred_arr)
-                    plt.scatter(np.cos(pred_arr[:, 0] - pred_arr[:, 1]), np.sin(pred_arr[:, 0] - pred_arr[:, 1]), c='r',
-                                alpha=.1)
+                    plt.scatter(np.cos(pred_arr[k + '_pred'] - pred_arr[k + '_true']),
+                                np.sin(pred_arr[k + '_pred'] - pred_arr[k + '_true']), c='r', alpha=.05)
 
                     v = np.linspace(0, 2 * np.pi)
-                    plt.plot(np.cos(v), np.sin(v), alpha=.1)
+                    plt.plot(np.cos(v), np.sin(v), alpha=.01)
                 elif k in LINEAR_SCATTER_ATTRS:
-                    plt.scatter(pred_arr[:, 0], pred_arr[:, 1])
+                    plt.scatter(df[k + '_pred'], df[k + '_true'], alpha=.05)
                     plt.xlabel('Prediction')
                     plt.ylabel('True value')
-                    l = [pred_arr[:, 0].min(), pred_arr[:, 0].max()]
+                    l = [df[k + '_pred'].min(), df[k + '_pred'].max()]
                     plt.plot(l, l, 'r')
 
                 plt.gca().set_aspect('equal', adjustable='box')

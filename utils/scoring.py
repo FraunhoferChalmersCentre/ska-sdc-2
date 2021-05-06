@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 
 from definitions import config
 
@@ -22,8 +21,8 @@ def prediction_match(header, row, batch):
 def score_source(header, batch, parametrized_df):
     true_attrs = {k: batch[k].cpu().numpy() for k in
                   ['ra', 'dec', 'central_freq', 'line_flux_integral', 'hi_size', 'w20', 'pa', 'i']}
-    matched = parametrized_df[[prediction_match(header, r, batch) for i, r in parametrized_df.iterrows()]]
-    matched['pos_error'] = np.sqrt(
+    matched = parametrized_df.loc[[prediction_match(header, r, batch) for i, r in parametrized_df.iterrows()]].copy()
+    matched.loc[:, 'pos_error'] = np.sqrt(
         np.square(matched['ra'] - true_attrs['ra']) + np.square(matched['dec'] - true_attrs['dec'])) * 3600 / \
                            true_attrs['hi_size']
 
@@ -32,13 +31,13 @@ def score_source(header, batch, parametrized_df):
     for attr in LINEAR_SCATTER_ATTRS:
         if attr in matched.columns:
             predictions[attr] = [matched[attr].mean(), true_attrs[attr].mean()]
-            matched[attr + '_error'] = np.abs(matched[attr] - true_attrs[attr]) / true_attrs[attr]
+            matched.loc[:, attr + '_error'] = np.abs(matched[attr] - true_attrs[attr]) / true_attrs[attr]
 
     for attr in ANGLE_SCATTER_ATTRS:
         if attr in matched.columns:
             predictions[attr] = [matched[attr].mean(), true_attrs[attr].mean()]
             theta = np.deg2rad(matched[attr] - true_attrs[attr])
-            matched[attr + '_error'] = np.abs(np.rad2deg(np.arctan2(np.sin(theta), np.cos(theta))))
+            matched.loc[:, attr + '_error'] = np.abs(np.rad2deg(np.arctan2(np.sin(theta), np.cos(theta))))
 
     scores = {}
     for attr, threshold in config['scoring']['threshold'].items():
