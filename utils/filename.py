@@ -47,8 +47,8 @@ class ProcessedFileName(DirectoryFileName):
     def allocation_dict(self, types):
         return self._eval_dev_name(types, 'segmap_eval.npz', 'allocation_{}dev.pb')
 
-    def dataset(self, size: str, cube_side: int, prob: int):
-        name = 'dataset_{}_{}_{}'.format(size, cube_side, prob)
+    def dataset(self, size: str, prob: int):
+        name = 'dataset_{}_{}'.format(size, prob)
         path = self.get_path(name)
         prepare_dir(path)
         return path

@@ -37,6 +37,7 @@ def cache_hi_cube(hi_cube_file, min_f0, max_f1):
     f0 = min_f0
     hi_data_fits = fits.getdata(hi_cube_file, ignore_blank=True)
     hi_cube_tensor = torch.tensor(hi_data_fits[min_f0:max_f1].astype(np.float32), dtype=torch.float32).T
+    print(max_f1)
     for l in range(min_f0, max_f1):
         if len(scale) <= l:
             percentiles = np.percentile(hi_data_fits[l], [.1, 99.9])
@@ -205,6 +206,7 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
 
                 if max_f1 - prev_max_f1 < empty_cube_dim[-1]:
                     max_f1 = prev_max_f1 + empty_cube_dim[-1]
+                    max_f1 = min(max_f1, get_hi_shape(hi_cube_file)[-1])
 
                 cache_hi_cube(hi_cube_file, min_f0, max_f1)
 

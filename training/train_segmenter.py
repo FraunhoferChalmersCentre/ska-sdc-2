@@ -1,12 +1,12 @@
 from datetime import datetime
-from typing import Any, List
+from typing import Any, List, Iterable
 from itertools import starmap
 
 import pandas as pd
 import pytorch_lightning as pl
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Sampler
+from torch.utils.data import DataLoader, Sampler, BatchSampler
 import torchvision.transforms.functional as TF
 import numpy as np
 from pytorch_toolbelt import losses
@@ -34,6 +34,38 @@ class SortedSampler(Sampler):
 
     def __iter__(self):
         return iter(self.sorted_indices)
+
+
+class EquiBatchBootstrapSampler(Sampler):
+    def __init__(self, index, n_total, batch_size, bootstrap=False, intensities=None):
+        # half batch size
+        self.bootstrap = bootstrap
+        self.intensities = intensities
+        self.hbs = int(batch_size / 2)
+        self.sources = np.arange(index)
+        self.empty = np.arange(index, n_total)
+
+    def __len__(self):
+        return len(self.sources) + len(self.empty)
+
+    def __iter__(self):
+        if self.bootstrap:
+            source_samples = np.random.choice(self.sources, len(self.sources), replace=True, p=self.intensities)
+        else:
+            source_samples = np.random.permutation(self.sources)
+
+        empty_samples = np.random.permutation(self.empty)
+
+        n_batches = int(np.ceil(len(source_samples) / self.hbs))
+        batched_indices = []
+
+        for i in range(n_batches):
+            batch = []
+            batch.extend(source_samples[i * self.hbs:(i + 1) * self.hbs])
+            batch.extend(empty_samples[i * self.hbs:(i + 1) * self.hbs])
+            batched_indices.extend(np.random.permutation(batch))
+
+        return iter(batched_indices)
 
 
 def get_random_vis_id(dataset, shape, min_allocated, random_state=np.random.RandomState()):
@@ -204,7 +236,12 @@ class TrainSegmenter(BaseSegmenter):
             f(sofia_out, has_source)
             self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
+        points = 0
+        predictions = None
+
         if has_source and sofia_out:
+            self.log('found', sofia_out, on_step=True, on_epoch=True)
+
             n_matched, scores, predictions = score_source(self.header, batch, parametrized_df)
 
             self.log('score_n_matches', n_matched, on_step=True, on_epoch=True)
@@ -212,11 +249,15 @@ class TrainSegmenter(BaseSegmenter):
             for k, v in scores.items():
                 self.log('score_' + k, v, on_step=True, on_epoch=True)
 
-            self.log('score_total', np.mean([scores[k] for k in scores.keys()]), on_step=True, on_epoch=True)
+            points = np.mean([scores[k] for k in scores.keys()])
+            self.log('score_total', points, on_step=True, on_epoch=True)
 
-            return predictions
+        if not has_source and sofia_out:
+            points = -1
 
-        return None
+        self.log('point', torch.tensor(points), on_step=True, on_epoch=True, reduce_fx=torch.sum, tbptt_reduce_fx=torch.sum)
+
+        return predictions
 
     def validation_epoch_start(self):
         pass
@@ -258,7 +299,13 @@ class TrainSegmenter(BaseSegmenter):
         self.log_prediction_image()
 
     def train_dataloader(self):
-        return DataLoader(self.training_set, batch_size=self.batch_size, shuffle=True)
+        index = self.training_set.get_attribute('index')
+        intensities = np.array([len(a) for a in self.training_set.get_attribute('allocated_voxels')[:-1]])
+        intensities = intensities / np.sum(intensities)
+        return DataLoader(self.training_set,
+                          sampler=EquiBatchBootstrapSampler(index, len(self.training_set), self.batch_size,
+                                                            bootstrap=True, intensities=intensities),
+                          batch_size=self.batch_size, shuffle=False)
 
     def val_dataloader(self):
         return DataLoader(self.validation_set, batch_size=1, sampler=SortedSampler(self.validation_set))

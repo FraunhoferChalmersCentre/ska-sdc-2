@@ -6,7 +6,7 @@ from sklearn.decomposition import PCA
 
 from definitions import ROOT_DIR, config
 
-default_file = ROOT_DIR + '/training/SoFiA_parameters.txt'
+default_file = ROOT_DIR + '/pipeline/SoFiA_parameters.txt'
 Parameters = readoptions.readPipelineOptions(default_file)
 
 catParNamesBase = (

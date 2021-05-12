@@ -38,23 +38,36 @@ def fill_dict(units: np.ndarray, dataset: Dict[str, np.ndarray], required_attrs:
 
 
 def filter_units(dataset: Dict, units: np.ndarray, attribute: str, fraction: float):
-    empty_units = units[units > dataset['index']]
-    filter_values = np.array([dataset[attribute][u] for u in units[units <= dataset['index']]])
+    empty_units = units[units >= dataset['index']]
+    empty_units = np.random.choice(empty_units, size=int(len(empty_units) * fraction), replace=False)
+
+    source_units = units[units < dataset['index']]
+    filter_values = np.array([dataset[attribute][u] for u in source_units])
     threshold = np.percentile(filter_values, fraction * 100)
-    source_units = units[(units > dataset['index']) & (filter_values > threshold)]
+    source_units = source_units[filter_values > threshold]
+
     return np.concatenate([source_units, empty_units])
 
 
 def split(dataset: Dict, left_fraction: float, required_attrs: List[str], random_state: np.random.RandomState,
-          left_filter: float = None, right_filter: float = None, filter_attr: str = None):
+          left_filter: float = None, right_filter: float = None, filter_attr: str = 'line_flux_integral'):
     n_units = len(dataset[required_attrs[0]])
-    n_left = int(n_units * left_fraction)
 
-    left_units = random_state.choice(n_units, size=n_left, replace=False).astype(np.int32)
+    all_units = np.arange(n_units)
+    empty_units = all_units[all_units >= dataset['index']]
+    source_units = all_units[all_units < dataset['index']]
+
+    left_units = np.concatenate(
+        [random_state.choice(units, size=int(left_fraction * len(units)), replace=False).astype(np.int32) for
+         units in [empty_units, source_units]])
+
+    right_units = np.setdiff1d(all_units, left_units).astype(np.int32)
+
     if left_filter is not None:
-        left_units = filter_units(dataset, left_filter)
+        left_units = filter_units(dataset, left_units, filter_attr, left_filter)
 
-    right_units = np.setdiff1d(np.arange(n_units), left_units).astype(np.int32)
+    if right_filter is not None:
+        right_units = filter_units(dataset, right_units, filter_attr, right_filter)
 
     splits = tuple(map(np.sort, [left_units, right_units]))
 
@@ -107,8 +120,8 @@ def merge(*datasets: Dict):
 
 
 def train_val_split(dataset: Dict, train_fraction: float, required_attrs: List[str] = ['image', 'position'],
-                    random_state=np.random.RandomState()):
-    train, validation = split(dataset, train_fraction, required_attrs, random_state)
+                    random_state=np.random.RandomState(), train_filter=None):
+    train, validation = split(dataset, train_fraction, required_attrs, random_state, left_filter=train_filter)
     datsets = (SKADataSet(train, TrainingItemGetter()), SKADataSet(validation, ValidationItemGetter(), random_type=1))
 
     return tuple(map(add_transforms, datsets))
