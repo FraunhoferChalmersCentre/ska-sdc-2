@@ -5,16 +5,16 @@ from itertools import starmap
 import pandas as pd
 import pytorch_lightning as pl
 import torch
+from sofia import readoptions
 from torch import nn
-from torch.utils.data import DataLoader, Sampler, BatchSampler
+from torch.utils.data import DataLoader, Sampler
 import torchvision.transforms.functional as TF
 import numpy as np
 from pytorch_toolbelt import losses
 from astropy.io import fits
 import matplotlib.pyplot as plt
-from astropy.wcs import WCS
 
-from definitions import config
+from definitions import config, ROOT_DIR
 from pipeline.segmenter import BaseSegmenter
 from utils.clip import partition_overlap, cube_evaluation, connect_outputs
 
@@ -92,7 +92,7 @@ class TrainSegmenter(BaseSegmenter):
     def __init__(self, base: BaseSegmenter, loss_fct: Any, training_set: AbstractSKADataset,
                  validation_set: AbstractSKADataset, header: fits.Header, batch_size=128, x_key='image',
                  y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold=None, lr=1e-2,
-                 momentum=.9):
+                 momentum=.9, sofia_parameters=None, dataset_surrogates=True):
         super().__init__(base.model, base.scale, base.mean, base.std)
         self.header = header
         self.batch_size = batch_size
@@ -129,7 +129,7 @@ class TrainSegmenter(BaseSegmenter):
             'dice': self.sofia_dice
         }
 
-        self.dice = losses.DiceLoss(mode='binary')
+        self.dice = losses.DiceLoss(mode='binary', from_logits=True)
         self.lovasz = losses.BinaryLovaszLoss()
         self.cross_entropy = losses.SoftBCEWithLogitsLoss()
 
@@ -138,6 +138,14 @@ class TrainSegmenter(BaseSegmenter):
             'Lovasz hinge': self.lovasz,
             'Cross Entropy': self.cross_entropy
         }
+
+        if sofia_parameters is None:
+            self.sofia_parameters = readoptions.readPipelineOptions(
+                ROOT_DIR + config['downstream']['sofia']['param_file'])
+        else:
+            self.sofia_parameters = sofia_parameters
+
+        self.dataset_surrogates = dataset_surrogates
 
     def on_fit_start(self):
         self.log_image()
@@ -210,13 +218,10 @@ class TrainSegmenter(BaseSegmenter):
 
         model_out = connect_outputs(torch.squeeze(batch['image']), outputs, efficient_slices, padding)
         model_out = model_out.view(1, 1, *model_out.shape).to(self.device)
-        mask = torch.round(nn.Sigmoid()(model_out))
+        mask = torch.round(nn.Sigmoid()(model_out) + .5 - self.threshold)
 
         clipped_segmap = torch.empty(model_out.shape, device=self.device)
         clipped_segmap[0, 0] = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
-
-        for surrogate, f in self.surrogates.items():
-            self.log(surrogate, f(model_out, clipped_segmap.float()), on_step=True, on_epoch=True)
 
         for metric, f in self.pixel_metrics.items():
             f(mask.int().view(-1), clipped_segmap.int().view(-1))
@@ -226,7 +231,8 @@ class TrainSegmenter(BaseSegmenter):
         clipped_input = torch.empty(model_out.shape, device=self.device)
         clipped_input[0, 0] = batch['image'][0, 0][[slice(p, - p) for p in padding]]
 
-        parametrized_df = parametrise_sources(self.header, clipped_input.T, mask.T, batch['position'], padding)
+        parametrized_df = parametrise_sources(self.header, clipped_input.T, mask.T, batch['position'],
+                                              self.sofia_parameters, padding)
         sofia_out = parametrisation_validation(self.header, parametrized_df, batch, has_source)
 
         has_source, sofia_out = tuple(
@@ -255,7 +261,14 @@ class TrainSegmenter(BaseSegmenter):
         if not has_source and sofia_out:
             points = -1
 
-        self.log('point', torch.tensor(points), on_step=True, on_epoch=True, reduce_fx=torch.sum, tbptt_reduce_fx=torch.sum)
+        self.log('point', torch.tensor(points), on_step=True, on_epoch=True, reduce_fx=torch.sum,
+                 tbptt_reduce_fx=torch.sum)
+
+        if self.dataset_surrogates:
+            return model_out, clipped_segmap
+
+        for surrogate, f in self.surrogates.items():
+            self.log(surrogate, f(model_out, clipped_segmap.float()), on_step=True, on_epoch=True)
 
         return predictions
 
@@ -264,6 +277,14 @@ class TrainSegmenter(BaseSegmenter):
 
     def validation_epoch_end(self, validation_step_outputs):
         if len(validation_step_outputs) == 0:
+            return
+
+        if self.dataset_surrogates:
+            model_outs = torch.cat(tuple([p[0].view(-1) for p in validation_step_outputs])).view(1, 1, -1)
+            segmaps = torch.cat(tuple([p[1].view(-1) for p in validation_step_outputs])).view(1, 1, -1)
+            for surrogate, f in self.surrogates.items():
+                self.log(surrogate, f(model_outs, segmaps.float()), on_epoch=True)
+
             return
 
         if config['training']['save_plots']:

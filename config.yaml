@@ -21,6 +21,8 @@ training:
   save_plots: True
 
 downstream:
+  sofia:
+    param_file: /pipeline/SoFiA_parameters.txt
   calibration:
     hi_size:
       coefficient: 0.48

@@ -1,13 +1,12 @@
+from typing import Dict
+
 import numpy as np
 from astropy.wcs import WCS
-from sofia import readoptions, linker, parametrisation
+from sofia import linker, parametrisation
 import pandas as pd
 from sklearn.decomposition import PCA
 
-from definitions import ROOT_DIR, config
-
-default_file = ROOT_DIR + '/pipeline/SoFiA_parameters.txt'
-Parameters = readoptions.readPipelineOptions(default_file)
+from definitions import config
 
 catParNamesBase = (
     "id", "x_geo", "y_geo", "z_geo", "x", "y", "z", "x_min", "x_max", "y_min", "y_max", "z_min", "z_max", "n_pix",
@@ -149,7 +148,7 @@ def estimate_object_properties(cube: np.array, mask: np.array, dilated_mask: np.
     return df
 
 
-def extract_objects(cube: np.ndarray, mask: np.ndarray):
+def extract_objects(cube: np.ndarray, mask: np.ndarray, Parameters: Dict):
     if Parameters["merge"]["positivity"]:
         mask[cube < 0.0] = 0
 
@@ -198,7 +197,7 @@ def compute_challenge_metrics(df, header, position, padding):
 
         if 'est_flux' in df.columns:
             df.loc[:, 'line_flux_integral'] = df['est_flux'] * header['CDELT3'] / (
-                        np.pi * (7 / 2.8) ** 2 / (4 * np.log(2)))
+                    np.pi * (7 / 2.8) ** 2 / (4 * np.log(2)))
 
         if 'ell_maj' in df.columns:
             df.loc[:, 'hi_size'] = df['ell_maj'] * 2.8
@@ -216,14 +215,14 @@ def compute_challenge_metrics(df, header, position, padding):
     return df
 
 
-def parametrise_sources(header, input_cube, mask, position, padding=None):
+def parametrise_sources(header, input_cube, mask, position, parameters: Dict, padding=None):
     if mask.sum() == 0.:
         return pd.DataFrame()
 
     input_cube, mask, position = tuple(
         map(lambda t: t.squeeze().detach().cpu().numpy(), (input_cube, mask, position)))
 
-    obj_mask, dilated_mask, df = extract_objects(input_cube, mask)
+    obj_mask, dilated_mask, df = extract_objects(input_cube, mask, parameters)
 
     df = estimate_object_properties(input_cube, obj_mask, dilated_mask, df)
 
