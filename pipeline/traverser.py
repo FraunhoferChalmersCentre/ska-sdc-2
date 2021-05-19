@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
 from pipeline.segmenter import BaseSegmenter
+from torch import nn
 from pipeline.downstream import parametrise_sources
 from definitions import config
 from astropy.io import fits
 import pandas as pd
 from utils.clip import partition_overlap, partition_expanding, cube_evaluation, connect_outputs
 import numpy as np
+import pickle
 import torch
 
 
@@ -34,58 +36,85 @@ class SimpleModelTraverser(ModelTraverser):
 class EvaluationTraverser(ModelTraverser):
 
     def __init__(self, model: BaseSegmenter, fits_file: str, model_input_dim, desired_dim, cnn_padding,
-                 sofia_padding, gpu_memory: float, n_parallel: int = 1, i: int = 0):
+                 sofia_padding, max_batch_size: int, n_parallel: int = 1, i_job: int = 0, j_loop: int = 0,
+                 df_name: str = None):
         super().__init__(model)
         self.model_input_dim = model_input_dim
         self.desired_dim = desired_dim
         self.cnn_padding = cnn_padding
         self.sofia_padding = sofia_padding
         self.n_parallel = n_parallel
-        self.i = i
-        self.gpu_memory = gpu_memory
+        self.i_job = i_job
+        self.j_loop = j_loop
+        self.max_batch_size = max_batch_size
         header = fits.getheader(fits_file, ignore_blank=True)
         self.cube_shape = np.array(list(map(lambda x: header[x], ['NAXIS1', 'NAXIS2', 'NAXIS3'])))
         self.header = header
         self.data_cache = CubeCache(fits_file)
-        slices_partition = partition_expanding(self.cube_shape, desired_dim, cnn_padding + sofia_padding)
-        self.slices_partition = np.array_split(slices_partition[0], self.n_parallel)[self.i]
+        slices_partition = partition_expanding(self.cube_shape, desired_dim + 2*cnn_padding, cnn_padding + sofia_padding)
+        self.slices_partition = np.array_split(slices_partition[0], self.n_parallel)[self.i_job]
+        if df_name is None:
+            df_name = ''
+        self.df_name = df_name + '_n_parallel' + str(n_parallel) + '_i_job' + str(i_job) + '.txt'
 
     def __len__(self):
         return len(self.slices_partition)
 
     def traverse(self) -> pd.DataFrame:
-        df = pd.DataFrame()
-        for slices in self.slices_partition:
-            self.data_cache.cache_data(slices)
-            hi_cube_tensor = self.data_cache.get_hi_data()
-            position = np.array([[s.start, s.stop] for s in slices]).T
-            overlap_slices_partition, overlaps_partition = partition_overlap(position[1]-position[0],
-                                                                             self.model_input_dim,
-                                                                             self.cnn_padding, self.gpu_memory)
-            outputs = list()
-            efficient_slices = list()
-            for overlap_slices, overlaps in zip(overlap_slices_partition, overlaps_partition):
-                o, e = cube_evaluation(hi_cube_tensor, self.model_input_dim, self.cnn_padding, position, overlap_slices,
-                                       overlaps, self.model)
-                outputs += o
-                efficient_slices += e
-            mask = connect_outputs(hi_cube_tensor, outputs, efficient_slices, self.cnn_padding)
+        if self.j_loop > 0:
+            df = pd.read_csv(self.df_name)
+        else:
+            df = pd.DataFrame()
 
-            # Convert to numpy for Sofia
-            mask = mask.numpy().T
-            hi_cube = hi_cube_tensor.numpy().T
-            partition_position = np.array([s.start for s in slices])
-            prediction = parametrise_sources(self.header, hi_cube, mask, partition_position)
+        for j, slices in enumerate(self.slices_partition):
+            print('Loop {} of {}'.format(str(j), str(len(self.slices_partition))))
+            if j >= self.j_loop:
+                self.data_cache.cache_data(slices)
+                hi_cube_tensor = self.data_cache.get_hi_data()
+                position = np.array([[s.start, s.stop] for s in slices]).T
+                overlap_slices_partition, overlaps_partition = partition_overlap(position[1]-position[0],
+                                                                                 self.model_input_dim,
+                                                                                 self.cnn_padding, self.max_batch_size)
+                outputs = list()
+                efficient_slices = list()
+                for overlap_slices, overlaps in zip(overlap_slices_partition, overlaps_partition):
+                    try:
+                        o, e = cube_evaluation(hi_cube_tensor, self.model_input_dim, self.cnn_padding, position,
+                                               overlap_slices, overlaps, self.model)
+                    except:
+                        pickle.dump({'j_loop': j, 'n_parallel': self.n_parallel, 'i_job': self.i_job},
+                                    open("j_loop.p", "wb"))
+                        raise ValueError('Memory Issue')
+                    outputs += o
+                    efficient_slices += e
+                mask = connect_outputs(hi_cube_tensor, outputs, efficient_slices, self.cnn_padding)
+                mask = torch.round(nn.Sigmoid()(mask) + 0.5 - config['hyperparameters']['threshold'])
+                mask[mask > 1] = 1
 
-            # Filter Desired Characteristics and Non-edge-padding
-            df = remove_non_edge_padding(slices, self.cube_shape, self.cnn_padding, self.sofia_padding, df)
-            df = df[config['characteristic_parameters']]
+                inner_slices = [slice(p, -p) for p in self.cnn_padding]
+                hi_cube_tensor = hi_cube_tensor[inner_slices]
 
-            # Concatenate DataFrames
-            df = df.append(prediction)
+                # Convert to numpy for Sofia
+                partition_position = torch.tensor([[s.start+p for s, p in zip(slices, self.cnn_padding)],
+                                                   [s.stop-p for s, p in zip(slices, self.cnn_padding)]])
+                prediction = parametrise_sources(self.header, hi_cube_tensor.T, mask.T, partition_position)
+
+                # Filter Desired Characteristics and Non-edge-padding
+                if len(prediction) > 0:
+                    prediction = remove_non_edge_padding(slices, self.cube_shape, self.cnn_padding, self.sofia_padding,
+                                                         prediction)
+                    prediction = prediction[config['characteristic_parameters']]
+
+                    # Concatenate DataFrames
+                    df = df.append(prediction)
+
+                    # Save DataFrame
+                    df.index = np.arange(df.shape[0])
+                    df.to_csv(self.df_name, sep=' ', index_label='id')
 
         # Fix Index
         df.index = np.arange(df.shape[0])
+        df.to_csv(self.df_name, sep=' ', index_label='id')
         return df
 
 
@@ -143,4 +172,3 @@ def remove_non_edge_padding(slices, cube_shape, cnn_padding, sofia_padding, df):
                        zip(slices, sofia_padding, cnn_padding, cube_shape)])
     df_filter = np.all(np.logical_and(rpositions >= l_padd, rpositions <= u_padd), axis=1)
     return df[df_filter]
-

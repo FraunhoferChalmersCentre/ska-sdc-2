@@ -32,7 +32,7 @@ def coordinates(dim, upper_left, cube_shape, padding):
     return coord_start, coord_end, ext_padding
 
 
-def _partition_indexing(cube_shape, dim, padding, gpu_memory=None, cube_dtype=torch.float32):
+def _partition_indexing(cube_shape, dim, padding, max_batch_size=None):
     if np.any(dim < 2 * padding):
         raise ValueError('Padding has to be less than half dimension')
     effective_shape = tuple(starmap(lambda s, p: s - 2 * p, zip(dim, padding)))
@@ -42,9 +42,8 @@ def _partition_indexing(cube_shape, dim, padding, gpu_memory=None, cube_dtype=to
     meshes = np.meshgrid(*map(np.arange, patches_each_dim))
     upper_lefts = np.stack(list(map(np.ravel, meshes)))
     n_evaluations = upper_lefts.shape[1]
-    if gpu_memory is not None:
-        n_gigabytes = torch.empty(1, dtype=cube_dtype).element_size() * np.prod(dim) / 1e9
-        batch_size = min(int(gpu_memory / n_gigabytes), n_evaluations)
+    if max_batch_size is not None:
+        batch_size = min(max_batch_size, n_evaluations)
     else:
         batch_size = n_evaluations
 
@@ -53,8 +52,8 @@ def _partition_indexing(cube_shape, dim, padding, gpu_memory=None, cube_dtype=to
     return upper_lefts, indexes_partition
 
 
-def partition_overlap(cube_shape, dim, padding, gpu_memory=None, cube_dtype=torch.float32):
-    upper_lefts, indexes_partition = _partition_indexing(cube_shape, dim, padding, gpu_memory, cube_dtype)
+def partition_overlap(cube_shape, dim, padding, max_batch_size=None):
+    upper_lefts, indexes_partition = _partition_indexing(cube_shape, dim, padding, max_batch_size)
 
     overlap_slices_partition = list()
     overlaps_partition = list()
@@ -90,7 +89,7 @@ def _slice_add(slice_1, slice_2):
 
 
 def cube_evaluation(cube, dim, padding, position, overlap_slices, overlaps, model: BaseSegmenter):
-    model_input = torch.empty(len(overlap_slices), 1, *dim, device=model.device)
+    model_input = torch.empty(len(overlap_slices), 1, *dim)
     frequency_channels = torch.empty((len(overlap_slices), 2))
 
     padding_slices = list()
@@ -102,8 +101,15 @@ def cube_evaluation(cube, dim, padding, position, overlap_slices, overlaps, mode
         padd_slices = [slice(int(p + o), int(- p)) for o, p in zip(overlaps[i], padding)]
         padding_slices.append(padd_slices)
 
-    model_out = model(model_input, frequency_channels)
-    outputs = [m[0][p] for m, p in zip(model_out, padding_slices)]
+    model.eval()
+    with torch.no_grad():
+        model_out = model(model_input, frequency_channels)
+    out = torch.empty(len(overlap_slices), 1, *dim)
+    out[:, :, :, :, :] = model_out.detach().clone()
+    del model_out
+    torch.cuda.empty_cache()
+
+    outputs = [m[0][p] for m, p in zip(out, padding_slices)]
     efficient_slices = [_slice_add(s, p) for s, p in zip(overlap_slices, padding_slices)]
     return outputs, efficient_slices
 

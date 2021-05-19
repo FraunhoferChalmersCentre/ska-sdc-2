@@ -16,14 +16,14 @@ class BaseSegmenter(pl.LightningModule):
         stop = frequency_channels[:, 1]
 
         for i, (im, start_channel, end_channel) in enumerate(zip(image, start.int(), stop.int())):
-            tr_im = im.T.clone()
+            target_image = transformed_image[i].T
+            tr_im = im.T
             for j, (value_span, mu, sigma) in enumerate(
                     zip(self.scale[start_channel:end_channel], self.mean[start_channel:end_channel],
                         self.std[start_channel:end_channel])):
-                tr_im[j] = (tr_im[j] - value_span[0]) / (value_span[1] - value_span[0])
-                tr_im[j] = torch.clamp(tr_im[j], 0., 1.)
-                tr_im[j] = (tr_im[j] - mu) / sigma
-            transformed_image[i] = tr_im.T
+                target_image[j] = (tr_im[j] - value_span[0]) / (value_span[1] - value_span[0])
+                target_image[j] = torch.clamp(target_image[j], 0., 1.)
+                target_image[j] = (target_image[j] - mu) / sigma
 
         return transformed_image.float()
 

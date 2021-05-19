@@ -54,9 +54,8 @@ def estimate_angle(mask: np.ndarray):
 
 
 def remove_non_reliable(objects, mask, catParNames, catParFormt, catParUnits):
-    # reliable = list(np.array(objects)[:, 0].astype(int))
-    reliable = list(np.array(objects)[np.array(objects)[:, catParNamesBase.index('snr_sum')] > 0, 0].astype(
-        int))  # select all positive sources
+    reliable = list(np.array(objects)[:, 0].astype(int))
+    # reliable = list(np.array(objects)[np.array(objects)[:, catParNamesBase.index('snr_sum')] > 0, 0].astype(int))  # select all positive sources
 
     objects, catParNames, catParUnits, catParFormt = remove_cols(objects, catParNames, catParFormt, catParUnits)
     # Make sure that reliable is sorted
@@ -169,6 +168,9 @@ def extract_objects(cube: np.ndarray, mask: np.ndarray):
     objects, catParNames, catParUnits, catParFormt, mask = remove_non_reliable(objects, mask, catParNamesBase,
                                                                                catParFormtBase, catParUnitsBase)
 
+    if len(objects) == 0:
+        return mask, mask, pd.DataFrame()
+
     dilated_mask, objects = parametrisation.dilate(cube.copy(), mask.copy(), objects, catParNames, Parameters)
 
     if len(objects) == 0:
@@ -181,7 +183,7 @@ def extract_objects(cube: np.ndarray, mask: np.ndarray):
 
 def compute_challenge_metrics(df, header, position, padding):
     if padding is None:
-        padding = np.zeros(len(position))
+        padding = np.zeros(len(position[0]))
     wcs = WCS(header)
 
     if len(df) > 0:

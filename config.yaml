@@ -52,3 +52,6 @@ characteristic_parameters:
   - pa
   - i
   - w20
+
+hyperparameters:
+  threshold: 0.5
