@@ -14,12 +14,12 @@ os.chdir(ROOT_DIR)
 if not os.path.exists(config['path']['data']):
     os.makedirs(config['path']['data'])
 
-truth_cat_urls = {'dev_s': 'https://owncloud.ia2.inaf.it/index.php/s/fUXSO5MdK2QT9eh/download?path=%2F&files=sky_dev_truthcat_v1.1.txt',
-                  'dev_l': 'https://owncloud.ia2.inaf.it/index.php/s/hinxyghvmqdP4kh/download?path=%2F&files=sky_ldev_truthcat_v1.1.txt',
+truth_cat_urls = {'dev_s': 'https://owncloud.ia2.inaf.it/index.php/s/fUXSO5MdK2QT9eh/download?path=%2F&files=sky_dev_truthcat_v2.txt',
+                  'dev_l': 'https://owncloud.ia2.inaf.it/index.php/s/hinxyghvmqdP4kh/download?path=%2F&files=sky_ldev_truthcat_v2.txt',
                   'eval': ''}
 
-sky_urls = {'dev_s': 'https://owncloud.ia2.inaf.it/index.php/s/fUXSO5MdK2QT9eh/download?path=%2F&files=sky_dev.fits',
-            'dev_l': 'https://owncloud.ia2.inaf.it/index.php/s/hinxyghvmqdP4kh/download?path=%2F&files=sky_ldev.fits',
+sky_urls = {'dev_s': 'https://owncloud.ia2.inaf.it/index.php/s/fUXSO5MdK2QT9eh/download?path=%2F&files=sky_dev_v2.fits',
+            'dev_l': 'https://owncloud.ia2.inaf.it/index.php/s/hinxyghvmqdP4kh/download?path=%2F&files=sky_ldev_v2.fits',
             'eval': 'https://owncloud.ia2.inaf.it/index.php/s/IEC7eOO4Qdaoi2L/download?path=%2F&files=sky_eval.fits'}
 
 cont_urls = {'dev_s': 'https://owncloud.ia2.inaf.it/index.php/s/fUXSO5MdK2QT9eh/download?path=%2F&files=cont_dev.fits',

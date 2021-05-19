@@ -27,7 +27,7 @@ def power_transform(t: np.ndarray, base=100, percentile=99.9):
 
 def minmax_transform(t: np.ndarray):
     with tqdm(total=t.shape[0]) as pbar:
-        pbar.set_description('Apply power transform')
+        pbar.set_description('Apply minmax transform')
         for i in range(t.shape[0]):
             pbar.update(1)
             lower = np.percentile(t[i], .1)

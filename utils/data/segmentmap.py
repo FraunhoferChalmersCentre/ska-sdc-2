@@ -139,6 +139,8 @@ def create_from_df(df: pd.DataFrame, header: Header):
 
     allocation_dict = dict()
 
+    minv = np.float('inf')
+
     for i, row in df.iterrows():
         half_lengths = (row.major_radius_pixels, row.major_radius_pixels, row.n_channels / 2)
         spans = get_spans(full_cube_shape, row[['x', 'y', 'z']], half_lengths)
@@ -147,15 +149,27 @@ def create_from_df(df: pd.DataFrame, header: Header):
 
         if small_dense_cube is None or small_dense_cube.sum() == 0:
             continue
-        
-        cube_allocations = np.argwhere(small_dense_cube > 0).astype(np.int32)
 
-        allocations = cube_allocations + np.fromiter(map(lambda s: s[0], spans), dtype=np.int32)
+        cube_allocations = np.argwhere(small_dense_cube == 1).astype(np.int32)
 
-        allocation_dict[row.id] = allocations        
+        min_pos = np.fromiter(map(lambda s: s[0], spans), dtype=np.int32)
 
-        for a, c in zip(allocations, cube_allocations):
-            cube[tuple(a)] = small_dense_cube[tuple(c)]
+        allocations = []
+
+        for c in cube_allocations:
+            full_cube_pos = c + min_pos
+            ignore = False
+            for pos, shape in zip(full_cube_pos, full_cube_shape):
+                if pos < 0 or pos > shape:
+                    ignore = True
+
+            if not ignore:
+                cube[tuple(full_cube_pos)] = small_dense_cube[tuple(c)]
+                allocations.append(full_cube_pos)
+            else:
+                print(i, full_cube_pos, full_cube_shape)
+
+        allocation_dict[row.id] = np.array(allocations)
 
     return cube.to_coo(), allocation_dict
 
