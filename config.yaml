@@ -18,15 +18,15 @@ training:
   cube_size:
     spatial: 32
     freq: 32
-  save_plots: True
+  save_plots: False
 
 downstream:
   sofia:
     param_file: /pipeline/SoFiA_parameters.txt
   calibration:
     hi_size:
-      coefficient: 0.48
-      intercept: 7.57
+      coefficient: 1 # 0.48
+      intercept: 0 # 7.57
 
 constants:
   speed_of_light: 299792.458

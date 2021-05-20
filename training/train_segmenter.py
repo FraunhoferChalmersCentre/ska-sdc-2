@@ -52,7 +52,9 @@ class EquiBatchBootstrapSampler(Sampler):
         if self.bootstrap:
             source_samples = np.random.choice(self.sources, len(self.sources), replace=True, p=self.intensities)
         else:
-            source_samples = np.random.permutation(self.sources)
+            source_samples = self.sources
+
+        source_samples = np.random.permutation(source_samples)
 
         empty_samples = np.random.permutation(self.empty)
 
@@ -92,8 +94,11 @@ class TrainSegmenter(BaseSegmenter):
     def __init__(self, base: BaseSegmenter, loss_fct: Any, training_set: AbstractSKADataset,
                  validation_set: AbstractSKADataset, header: fits.Header, batch_size=128, x_key='image',
                  y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold=None, lr=1e-2,
-                 momentum=.9, sofia_parameters=None, dataset_surrogates=True):
+                 momentum=.9, sofia_parameters=None, dataset_surrogates=True, bootstrap_sampling=True,
+                 sofia_validation_interval=None, train_padding=4, random_rotation=True, random_mirror=True):
         super().__init__(base.model, base.scale, base.mean, base.std)
+
+        self.tr_pad = train_padding
         self.header = header
         self.batch_size = batch_size
         self.validation_set = validation_set
@@ -134,9 +139,10 @@ class TrainSegmenter(BaseSegmenter):
         self.cross_entropy = losses.SoftBCEWithLogitsLoss()
 
         self.surrogates = {
-            'Soft dice': self.dice,
-            'Lovasz hinge': self.lovasz,
-            'Cross Entropy': self.cross_entropy
+            'soft_dice': self.dice,
+            'lovasz_hinge': self.lovasz,
+            'cross_entropy': self.cross_entropy,
+            'val_loss': self.loss_fct
         }
 
         if sofia_parameters is None:
@@ -146,6 +152,10 @@ class TrainSegmenter(BaseSegmenter):
             self.sofia_parameters = sofia_parameters
 
         self.dataset_surrogates = dataset_surrogates
+        self.bootstrap_sampling = bootstrap_sampling
+        self.sofia_validation_interval = sofia_validation_interval
+        self.random_rotation = random_rotation
+        self.random_flip = random_mirror
 
     def on_fit_start(self):
         self.log_image()
@@ -190,13 +200,32 @@ class TrainSegmenter(BaseSegmenter):
         # It is independent of forward
         x, y = batch[self.x_key], batch[self.y_key]
 
+        if self.random_rotation:
+            for i in range(len(x)):
+                k = np.random.randint(0, 4)
+                x[i] = torch.rot90(x[i], k, [2, 3])
+                y[i] = torch.rot90(y[i], k, [2, 3])
+
+        if self.random_flip:
+            for i in range(len(x)):
+                if np.random.randint(2):
+                    x[i, 0] = torch.fliplr(x[i, 0])
+                    y[i, 0] = torch.fliplr(y[i, 0])
+
         f_channels = torch.empty((x.shape[0], 2), device=self.device)
         for i in range(x.shape[0]):
             f_channels[i, 0] = batch['position'][i, 0, -1] + batch['slices'][i][0][-1]
             f_channels[i, 1] = batch['position'][i, 0, -1] + batch['slices'][i][1][-1]
 
         y_hat = self(x, f_channels)
-        loss = self.loss_fct(y_hat, y)
+        del f_channels
+
+        effective_y_hat = y_hat[:, :, self.tr_pad:-self.tr_pad, self.tr_pad:-self.tr_pad,
+                          self.tr_pad:-self.tr_pad].clone()
+        del y_hat
+        effective_y = y[:, :, self.tr_pad:-self.tr_pad, self.tr_pad:-self.tr_pad, self.tr_pad:-self.tr_pad].clone()
+        del y
+        loss = self.loss_fct(effective_y_hat, effective_y)
         # Logging to TensorBoard by default
         self.log('train_loss', loss, on_epoch=True, on_step=False)
 
@@ -246,8 +275,6 @@ class TrainSegmenter(BaseSegmenter):
         predictions = None
 
         if has_source and sofia_out:
-            self.log('found', sofia_out, on_step=True, on_epoch=True)
-
             n_matched, scores, predictions = score_source(self.header, batch, parametrized_df)
 
             self.log('score_n_matches', n_matched, on_step=True, on_epoch=True)
@@ -266,9 +293,6 @@ class TrainSegmenter(BaseSegmenter):
 
         if self.dataset_surrogates:
             return model_out, clipped_segmap
-
-        for surrogate, f in self.surrogates.items():
-            self.log(surrogate, f(model_out, clipped_segmap.float()), on_step=True, on_epoch=True)
 
         return predictions
 
@@ -321,15 +345,14 @@ class TrainSegmenter(BaseSegmenter):
 
     def train_dataloader(self):
         index = self.training_set.get_attribute('index')
-        intensities = np.array([len(a) for a in self.training_set.get_attribute('allocated_voxels')[:-1]])
+        intensities = np.array([np.prod(a.shape) for a in self.training_set.get_attribute('segmentmap')[:-1]])
         intensities = intensities / np.sum(intensities)
-        return DataLoader(self.training_set,
-                          sampler=EquiBatchBootstrapSampler(index, len(self.training_set), self.batch_size,
-                                                            bootstrap=True, intensities=intensities),
-                          batch_size=self.batch_size, shuffle=False)
+        sampler = EquiBatchBootstrapSampler(index, len(self.training_set), self.batch_size,
+                                            bootstrap=self.bootstrap_sampling, intensities=intensities)
+        return DataLoader(self.training_set, sampler=sampler, batch_size=self.batch_size, shuffle=False)
 
     def val_dataloader(self):
         return DataLoader(self.validation_set, batch_size=1, sampler=SortedSampler(self.validation_set))
 
     def configure_optimizers(self):
-        return torch.optim.SGD(self.parameters(), lr=self.lr, momentum=self.momentum)
+        return torch.optim.Adam(self.parameters(), lr=self.lr)

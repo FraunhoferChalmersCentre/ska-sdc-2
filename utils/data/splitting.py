@@ -120,8 +120,9 @@ def merge(*datasets: Dict):
 
 
 def train_val_split(dataset: Dict, train_fraction: float, required_attrs: List[str] = ['image', 'position'],
-                    random_state=np.random.RandomState(), train_filter=None):
+                    random_state=np.random.RandomState(), train_filter=None,
+                    validation_item_getter=ValidationItemGetter()):
     train, validation = split(dataset, train_fraction, required_attrs, random_state, left_filter=train_filter)
-    datsets = (SKADataSet(train, TrainingItemGetter()), SKADataSet(validation, ValidationItemGetter(), random_type=1))
+    datsets = (SKADataSet(train, TrainingItemGetter()), SKADataSet(validation, validation_item_getter, random_type=1))
 
     return tuple(map(add_transforms, datsets))
