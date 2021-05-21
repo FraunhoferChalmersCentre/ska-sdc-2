@@ -1,12 +1,13 @@
+import time
 from typing import Dict
 
 import numpy as np
 from astropy.wcs import WCS
-from sofia import linker, parametrisation
+from sofia import linker, parametrisation, readoptions
 import pandas as pd
 from sklearn.decomposition import PCA
 
-from definitions import config
+from definitions import config, ROOT_DIR
 
 catParNamesBase = (
     "id", "x_geo", "y_geo", "z_geo", "x", "y", "z", "x_min", "x_max", "y_min", "y_max", "z_min", "z_max", "n_pix",
@@ -130,10 +131,13 @@ def estimate_object_properties(cube: np.array, mask: np.array, dilated_mask: np.
     df['ell_pa'] = np.nan
     df['est_flux'] = np.nan
     for i, obj in df.iterrows():
-        object_dilated_mask = np.where(dilated_mask == obj.id, 1., 0.)
-        object_mask = np.where(mask == obj.id, 1., 0.)
+        obj_bounds = tuple([slice(int(max(obj[p + '_min'] - 1, 0)), int(min(obj[p + '_max'] + 1, cube.shape[i])))
+                        for i, p in enumerate(['z', 'y', 'x'])])
 
-        df.loc[i, 'est_flux'] = (cube * object_dilated_mask).sum()
+        object_dilated_mask = np.where(dilated_mask[obj_bounds] == obj.id, 1., 0.)
+        object_mask = np.where(mask[obj_bounds] == obj.id, 1., 0.)
+
+        df.loc[i, 'est_flux'] = (cube[obj_bounds] * object_dilated_mask).sum()
 
         angle = estimate_angle(object_mask)
         if angle is not None:
@@ -152,6 +156,7 @@ def extract_objects(cube: np.ndarray, mask: np.ndarray, Parameters: Dict):
     if Parameters["merge"]["positivity"]:
         mask[cube < 0.0] = 0
 
+    tic = time.perf_counter()
     objects, mask = linker.link_objects(cube.copy(), [], mask.copy(), Parameters["merge"]["radiusX"],
                                         Parameters["merge"]["radiusY"], Parameters["merge"]["radiusZ"],
                                         Parameters["merge"]["minSizeX"], Parameters["merge"]["minSizeY"],
@@ -160,6 +165,8 @@ def extract_objects(cube: np.ndarray, mask: np.ndarray, Parameters: Dict):
                                         Parameters["merge"]["minVoxels"], Parameters["merge"]["maxVoxels"],
                                         Parameters["merge"]["minFill"], Parameters["merge"]["maxFill"],
                                         Parameters["merge"]["minIntens"], Parameters["merge"]["maxIntens"])
+    toc = time.perf_counter()
+    print(f"Linking performed in {toc - tic:0.4f} seconds")
 
     if len(objects) == 0:
         return mask, mask, pd.DataFrame()
@@ -170,7 +177,10 @@ def extract_objects(cube: np.ndarray, mask: np.ndarray, Parameters: Dict):
     if len(objects) == 0:
         return mask, mask, pd.DataFrame()
 
+    tic = time.perf_counter()
     dilated_mask, objects = parametrisation.dilate(cube.copy(), mask.copy(), objects, catParNames, Parameters)
+    toc = time.perf_counter()
+    print(f"Dilation performed in {toc - tic:0.4f} seconds")
 
     if len(objects) == 0:
         return mask, mask, pd.DataFrame()
@@ -215,7 +225,9 @@ def compute_challenge_metrics(df, header, position, padding):
     return df
 
 
-def parametrise_sources(header, input_cube, mask, position, parameters: Dict, padding=None):
+def parametrise_sources(header, input_cube, mask, position, parameters: Dict = None, padding=None):
+    if parameters is None:
+        parameters = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])
     if mask.sum() == 0.:
         return pd.DataFrame()
 
@@ -224,7 +236,10 @@ def parametrise_sources(header, input_cube, mask, position, parameters: Dict, pa
 
     obj_mask, dilated_mask, df = extract_objects(input_cube, mask, parameters)
 
+    tic = time.perf_counter()
     df = estimate_object_properties(input_cube, obj_mask, dilated_mask, df)
+    toc = time.perf_counter()
+    print(f"Estimation performed in {toc - tic:0.4f} seconds")
 
     df = compute_challenge_metrics(df, header, position, padding)
 
