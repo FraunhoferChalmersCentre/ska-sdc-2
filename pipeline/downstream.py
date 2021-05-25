@@ -132,7 +132,7 @@ def estimate_object_properties(cube: np.array, mask: np.array, dilated_mask: np.
     df['est_flux'] = np.nan
     for i, obj in df.iterrows():
         obj_bounds = tuple([slice(int(max(obj[p + '_min'] - 1, 0)), int(min(obj[p + '_max'] + 1, cube.shape[i])))
-                        for i, p in enumerate(['z', 'y', 'x'])])
+                            for i, p in enumerate(['z', 'y', 'x'])])
 
         object_dilated_mask = np.where(dilated_mask[obj_bounds] == obj.id, 1., 0.)
         object_mask = np.where(mask[obj_bounds] == obj.id, 1., 0.)
@@ -148,6 +148,11 @@ def estimate_object_properties(cube: np.array, mask: np.array, dilated_mask: np.
             df.loc[i, 'ell_maj'] = major
         if minor is not None:
             df.loc[i, 'ell_min'] = minor
+
+    for attr in ['ell_maj', 'ell_min', 'ell_pa', 'est_flux']:
+        df[attr] = df[attr].fillna(0)
+
+    df['est_flux'] = df['est_flux'].clip(lower=0)
 
     return df
 

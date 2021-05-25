@@ -137,16 +137,16 @@ threshold.verbose               =       false
 
 # Merging module
 
-merge.radiusX                   =       3
-merge.radiusY                   =       3
-merge.radiusZ                   =       3
-merge.minSizeX                  =       2
-merge.minSizeY                  =       2
-merge.minSizeZ                  =       2
+merge.radiusX                   =       1
+merge.radiusY                   =       1
+merge.radiusZ                   =       10
+merge.minSizeX                  =       3
+merge.minSizeY                  =       3
+merge.minSizeZ                  =       1
 merge.maxSizeX                  =       -1
 merge.maxSizeY                  =       -1
 merge.maxSizeZ                  =       -1
-merge.minVoxels                 =       3
+merge.minVoxels                 =       6
 merge.maxVoxels                 =       -1
 merge.minLoS                    =       -1
 merge.maxLoS                    =       -1
@@ -164,8 +164,8 @@ parameters.fitBusyFunction      =       false
 parameters.optimiseMask         =       false
 parameters.dilateMask           =       true
 parameters.dilateThreshold      =       0.02
-parameters.dilatePixMax         =       10
-parameters.dilateChanMax        =       3
+parameters.dilatePixMax         =       6
+parameters.dilateChanMax        =       1
 
 
 # Reliability module

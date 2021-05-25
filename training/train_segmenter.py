@@ -95,9 +95,10 @@ class TrainSegmenter(BaseSegmenter):
                  validation_set: AbstractSKADataset, header: fits.Header, batch_size=128, x_key='image',
                  y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold=None, lr=1e-2,
                  momentum=.9, sofia_parameters=None, dataset_surrogates=True, bootstrap_sampling=True,
-                 sofia_validation_interval=None, train_padding=4, random_rotation=True, random_mirror=True):
+                 sofia_validation_interval=None, train_padding=4, random_rotation=True, random_mirror=True, name=None):
         super().__init__(base.model, base.scale, base.mean, base.std)
 
+        self.name = name
         self.tr_pad = train_padding
         self.header = header
         self.batch_size = batch_size
@@ -262,31 +263,42 @@ class TrainSegmenter(BaseSegmenter):
 
         parametrized_df = parametrise_sources(self.header, clipped_input.T, mask.T, batch['position'],
                                               self.sofia_parameters, padding)
-        sofia_out = parametrisation_validation(self.header, parametrized_df, batch, has_source)
+        sources_found = len(
+            parametrized_df) > 0  # parametrisation_validation(self.header, parametrized_df, batch, has_source)
 
-        has_source, sofia_out = tuple(
-            map(lambda t: torch.tensor(t, device=self.device).view(-1), (has_source, sofia_out)))
+        has_source, sources_found = tuple(
+            map(lambda t: torch.tensor(t, device=self.device).view(-1), (has_source, sources_found)))
 
         for metric, f in self.sofia_metrics.items():
-            f(sofia_out, has_source)
+            f(sources_found, has_source)
             self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
         points = 0
         predictions = None
 
-        if has_source and sofia_out:
+        if has_source and sources_found:
+
+
             n_matched, scores, predictions = score_source(self.header, batch, parametrized_df)
 
             self.log('score_n_matches', n_matched, on_step=True, on_epoch=True)
 
-            for k, v in scores.items():
-                self.log('score_' + k, v, on_step=True, on_epoch=True)
+            if n_matched > 0:
+                self.log('n_found', torch.ones(1), on_step=False, on_epoch=True, reduce_fx=torch.sum,
+                         tbptt_reduce_fx=torch.sum)
 
-            points = np.mean([scores[k] for k in scores.keys()])
-            self.log('score_total', points, on_step=True, on_epoch=True)
+                for k, v in scores.items():
+                    self.log('score_' + k, v, on_step=True, on_epoch=True)
 
-        if not has_source and sofia_out:
-            points = -1
+                points = np.mean([scores[k] for k in scores.keys()])
+                self.log('score_total', points, on_step=True, on_epoch=True)
+            else:
+                points = 0
+
+            points -= (len(parametrized_df) - n_matched)
+
+        if not has_source and sources_found:
+            points = -len(parametrized_df) * 3.5
 
         self.log('point', torch.tensor(points), on_step=True, on_epoch=True, reduce_fx=torch.sum,
                  tbptt_reduce_fx=torch.sum)
@@ -317,7 +329,8 @@ class TrainSegmenter(BaseSegmenter):
             true_values = {k + '_true': [v[k][1] for v in validation_step_outputs] for k in
                            validation_step_outputs[0].keys()}
             df = pd.DataFrame({**predictions, **true_values})
-            df.to_csv('result_{}.csv'.format(datetime.now().strftime("%m%d%Y_%H%M%S")))
+            csv_name = 'result_{}.csv'.format(self.name) if self.name else datetime.now().strftime("%m%d%Y_%H%M%S")
+            df.to_csv(csv_name)
 
             for k in validation_step_outputs[0].keys():
                 pred_arr = df[[k + '_pred', k + '_true']]
