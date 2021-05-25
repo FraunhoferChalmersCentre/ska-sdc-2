@@ -26,7 +26,7 @@ class ValidationItemGetter(ItemGettingStrategy):
                 item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_source_keys()})
             else:
                 item_dict['image'] = dataset.get_attribute('image')[item]
-                item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[dataset.get_attribute('index')]
+                item_dict['segmentmap'] = torch.zeros(item_dict['image'].shape, device=item_dict['image'].device)
                 item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_common_keys()})
                 item_dict.update(
                     {k: dataset.get_attribute(k)[dataset.get_attribute('index')] for k in dataset.get_different_keys()})
@@ -68,19 +68,25 @@ class TrainingItemGetter(ItemGettingStrategy):
                 slices[-len(dim):] = [slice(*TrainingItemGetter._inside_cube(p, r, d, s)) for s, p, d, r in
                                       zip(shape[-len(dim):], position, dim, randoms)]
 
-                item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[item][slices]
+
                 item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_source_keys()})
             else:
                 slices[-len(dim):] = [slice(int(r * (s - d)), int(r * (s - d)) + d) for s, d, r in
                                       zip(shape[-len(dim):], dim, randoms)]
 
-                item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[dataset.get_attribute('index')][slices]
+
                 item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_common_keys()})
                 item_dict.update(
                     {k: dataset.get_attribute(k)[dataset.get_attribute('index')] for k in dataset.get_different_keys()})
 
             item_dict['image'] = dataset.get_attribute('image')[item][slices]
             item_dict['slices'] = torch.tensor([[s.start, s.stop] for s in slices[1:]]).T
+
+            if item < dataset.get_attribute('index'):
+                item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[item][slices]
+            else:
+                item_dict['segmentmap'] = torch.zeros(item_dict['image'].shape, device=item_dict['image'].device)
+
         return item_dict
 
 

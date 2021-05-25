@@ -193,8 +193,7 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
             if row.f1 > max_f1:
                 # Add empty boxes from current cache
                 n_empty_batch = int(batch_counter * (1 - prob_galaxy) / prob_galaxy)
-                empty_dict = add_empty_boxes(empty_dict, hi_cube_file, segmentmap, n_empty_batch, empty_cube_dim,
-                                             prev_max_f1, max_f1)
+
                 batch_counter = 0
 
                 # Update channel spans
@@ -217,6 +216,9 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
                 sources_dict = append_common_attributes(sources_dict, hi_cube_file=hi_cube_file, slices=slices)
                 sources_dict = append_source_attributes(sources_dict, row, segmentmap=segmentmap[slices].todense(),
                                                         allocation_dict=allocation_dict)
+                empty_shape = tuple([s.stop - s.start for s in slices])
+                empty_dict = add_empty_boxes(empty_dict, hi_cube_file, segmentmap, 1, empty_shape, min_f0, max_f1)
+
         # Ensure scale is computed for all channels
         if max_f1 <= get_hi_shape(hi_cube_file)[-1]:
             cache_hi_cube(hi_cube_file, max_f1, get_hi_shape(hi_cube_file)[-1])
@@ -244,7 +246,7 @@ def add_empty_boxes(data: dict, hi_cube_file: str, segmentmap: sparse.COO, n_emp
         segmentmap = segmentmap[slices]
         if segmentmap.sum() == 0:
             counter += 1
-        data = append_common_attributes(data, slices=slices)
+            data = append_common_attributes(data, slices=slices)
     return data
 
 

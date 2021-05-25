@@ -50,13 +50,19 @@ class EquiBatchBootstrapSampler(Sampler):
 
     def __iter__(self):
         if self.bootstrap:
-            source_samples = np.random.choice(self.sources, len(self.sources), replace=True, p=self.intensities)
+            source_intensities = self.intensities[:len(self.sources)]
+            source_intensities = source_intensities / source_intensities.sum()
+            source_samples = np.random.choice(self.sources, len(self.sources), replace=True, p=source_intensities)
+
+            empty_intensities = self.intensities[len(self.sources):]
+            empty_intensities = empty_intensities / empty_intensities.sum()
+            empty_samples = np.random.choice(self.empty, len(self.empty), replace=True, p=empty_intensities)
         else:
             source_samples = self.sources
+            empty_samples = self.empty
 
         source_samples = np.random.permutation(source_samples)
-
-        empty_samples = np.random.permutation(self.empty)
+        empty_samples = np.random.permutation(empty_samples)
 
         n_batches = int(np.ceil(len(source_samples) / self.hbs))
         batched_indices = []
@@ -277,8 +283,6 @@ class TrainSegmenter(BaseSegmenter):
         predictions = None
 
         if has_source and sources_found:
-
-
             n_matched, scores, predictions = score_source(self.header, batch, parametrized_df)
 
             self.log('score_n_matches', n_matched, on_step=True, on_epoch=True)
@@ -358,8 +362,7 @@ class TrainSegmenter(BaseSegmenter):
 
     def train_dataloader(self):
         index = self.training_set.get_attribute('index')
-        intensities = np.array([np.prod(a.shape) for a in self.training_set.get_attribute('segmentmap')[:-1]])
-        intensities = intensities / np.sum(intensities)
+        intensities = np.array([np.prod(a.shape) for a in self.training_set.get_attribute('image')])
         sampler = EquiBatchBootstrapSampler(index, len(self.training_set), self.batch_size,
                                             bootstrap=self.bootstrap_sampling, intensities=intensities)
         return DataLoader(self.training_set, sampler=sampler, batch_size=self.batch_size, shuffle=False)
