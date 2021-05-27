@@ -53,6 +53,12 @@ class ProcessedFileName(DirectoryFileName):
         prepare_dir(path)
         return path
 
+    def hyperopt_dataset(self, size: str, prob: int, modelname: str):
+        name = 'hyperopt_dataset_{}_{}_{}'.format(size, prob, modelname)
+        path = self.get_path(name)
+        prepare_dir(path)
+        return path
+
 
 class DataFileName(DirectoryFileName):
     def __init__(self):

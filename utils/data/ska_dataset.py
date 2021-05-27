@@ -22,11 +22,13 @@ class ValidationItemGetter(ItemGettingStrategy):
             item_dict = dict()
             if item < dataset.get_attribute('index'):
                 item_dict['image'] = dataset.get_attribute('image')[item]
-                item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[item]
+                if 'segmentmap' in dataset.get_keys():
+                    item_dict['segmentmap'] = dataset.get_attribute('segmentmap')[item]
                 item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_source_keys()})
             else:
                 item_dict['image'] = dataset.get_attribute('image')[item]
-                item_dict['segmentmap'] = torch.zeros(item_dict['image'].shape, device=item_dict['image'].device)
+                if 'segmentmap' in dataset.get_keys():
+                    item_dict['segmentmap'] = torch.zeros(item_dict['image'].shape, device=item_dict['image'].device)
                 item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_common_keys()})
                 item_dict.update(
                     {k: dataset.get_attribute(k)[dataset.get_attribute('index')] for k in dataset.get_different_keys()})
@@ -68,7 +70,6 @@ class TrainingItemGetter(ItemGettingStrategy):
                 slices[-len(dim):] = [slice(*TrainingItemGetter._inside_cube(p, r, d, s)) for s, p, d, r in
                                       zip(shape[-len(dim):], position, dim, randoms)]
 
-
                 item_dict.update({k: dataset.get_attribute(k)[item] for k in dataset.get_source_keys()})
             else:
                 slices[-len(dim):] = [slice(int(r * (s - d)), int(r * (s - d)) + d) for s, d, r in
@@ -92,7 +93,7 @@ class TrainingItemGetter(ItemGettingStrategy):
 
 class AbstractSKADataset(Dataset):
 
-    def add_attribute(self, additional_attributes: dict):
+    def add_attribute(self, additional_attributes: dict, source_keys: list = None, empty_keys: list = None):
         raise NotImplementedError
 
     def get_keys(self):
@@ -147,11 +148,14 @@ class SKADataSet(AbstractSKADataset):
         self.randomizer = Randomizer(random_type)
 
         # Key Handling
+        self.source_keys = source_keys
+        self.empty_keys = empty_keys
         if source_keys is None:
             self.source_keys = [k for k in list(self.get_keys()) if k not in ['index', 'dim', 'image', 'segmentmap',
                                                                               'allocated_voxels']]
         if empty_keys is None:
             self.empty_keys = ['position']
+
         self.common_keys = list(set.intersection(set(self.source_keys), set(self.empty_keys)))
         self.different_keys = list(set(self.source_keys) - set(self.common_keys))
 
@@ -160,11 +164,11 @@ class SKADataSet(AbstractSKADataset):
 
     def add_attribute(self, additional_attributes: dict, source_keys: list = None, empty_keys: list = None):
         for k, v in additional_attributes.items():
-            if isinstance(v, list) and not isinstance(v[0], torch.Tensor):
+            if isinstance(v, list):
                 if isinstance(v[0], np.ndarray):
                     self.data[k] = [torch.Tensor(value.astype(np.float32)) for value in v]
-                else:
-                    self.data[k] = torch.Tensor(v)
+                elif isinstance(v[0], torch.Tensor):
+                    self.data[k] = v
 
         if source_keys is not None:
             self.source_keys += source_keys
@@ -237,8 +241,8 @@ class StaticSKATransformationDecorator(AbstractSKADataset):
     def get_different_keys(self):
         return self.decorated.get_different_keys()
 
-    def add_attribute(self, additional_attributes: dict):
-        self.decorated.add_attribute(additional_attributes)
+    def add_attribute(self, additional_attributes: dict, source_keys: list = None, empty_keys: list = None):
+        self.decorated.add_attribute(additional_attributes, source_keys, empty_keys)
 
     def get_randomizer(self):
         return self.decorated.get_randomizer()

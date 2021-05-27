@@ -25,23 +25,22 @@ if module_path not in sys.path:
 import torch
 from utils import filename
 from utils import filehandling
+import glob
 
 size = 'dev_s'
 prob = 50
+modelname = 'resnet18'
 
-directory = filename.processed.dataset(size, prob)
-dataset = filehandling.read_splitted_dataset(directory)
+directory = filename.processed.hyperopt_dataset(size, prob, modelname)
+file = glob.glob(directory + '/*.pt')[0]
+dataset = torch.load(file)
 
 # Split to train & test
 
 # In[ ]:
+from utils.data.ska_dataset import SKADataSet, ValidationItemGetter
 
-import numpy as np
-from utils.data import splitting
-
-random_state = np.random.RandomState(5)
-train, test = splitting.train_val_split(dataset, .8, random_state=random_state, train_filter=None)
-print(len(train), len(test))
+test = SKADataSet(dataset, ValidationItemGetter(), empty_keys=['position', 'model_out'])
 
 # Load pretrained 2D model
 
@@ -65,26 +64,19 @@ from utils import filename
 hi_shape = get_hi_shape(filename.data.sky(size))
 header = fits.getheader(filename.data.sky(size))
 
-# Create Lightning objects
-
 # In[ ]:
 
 
 import pytorch_lightning as pl
-from pipeline.segmenter import BaseSegmenter
-from training.train_segmenter import TrainSegmenter
-from pytorch_toolbelt import losses
+from training.hyperopt_segmenter import HyperoptSegmenter
 
-base_segmenter = BaseSegmenter(model, train.get_attribute('scale'), train.get_attribute('mean'),
-                               train.get_attribute('std'))
-loss = losses.JointLoss(losses.DiceLoss(mode='binary', log_loss=True), losses.SoftBCEWithLogitsLoss(), 1.0, 1.0)
-segmenter = TrainSegmenter(base_segmenter, loss, train, test, header, dataset_surrogates=False)
+segmenter = HyperoptSegmenter(test, header)
 segmenter.eval()
-
 # %%
 from hyperopt import hp, fmin, tpe
 from datetime import datetime
 from pytorch_lightning.loggers import TensorBoardLogger
+import numpy as np
 from sklearn.linear_model import LinearRegression
 
 iteration = 0
@@ -105,7 +97,6 @@ def objective(args):
         segmenter.name = name
 
         segmenter.threshold = args['mask_threshold']
-        segmenter.load_state_dict(torch.load(ROOT_DIR + '/saved_models/12-epoch=519-val_loss=1.03.ckpt')['state_dict'])
         # /saved_models/10-epoch=59-sofia_dice=0.27.ckpt
         segmenter.sofia_parameters['merge']['radiusX'] = int(np.round(args['radius_spatial']))
         segmenter.sofia_parameters['merge']['radiusY'] = int(np.round(args['radius_spatial']))
@@ -117,7 +108,7 @@ def objective(args):
         segmenter.sofia_parameters['parameters']['dilatePixMax'] = int(np.round(args['dilation_max_spatial']))
         segmenter.sofia_parameters['parameters']['dilateChanMax'] = int(np.round(args['dilation_max_freq']))
 
-        trainer = pl.Trainer(gpus=1, logger=logger)
+        trainer = pl.Trainer(gpus=0, logger=logger)
 
         results = trainer.validate(segmenter)[0]
 
@@ -142,14 +133,14 @@ def objective(args):
         return float('inf')
 
 
-space = {'radius_spatial': hp.uniform('radius_spatial', .5, 6),
-         'radius_freq': hp.uniform('radius_freq', .5, 100),
-         'min_size_spatial': hp.uniform('min_size_spatial', .5, 10),
-         'min_size_freq': hp.uniform('min_size_freq', 5, 50),
-         'min_voxels': hp.uniform('min_voxels', 50, 150),
+space = {'radius_spatial': hp.uniform('radius_spatial', .5, 10),
+         'radius_freq': hp.uniform('radius_freq', .5, 50),  # hp.uniform('radius_freq', .5, 100)
+         'min_size_spatial': hp.uniform('min_size_spatial', .5, 10),  # hp.uniform('min_size_spatial', .5, 10)
+         'min_size_freq': hp.uniform('min_size_freq', 10, 100),  # hp.uniform('min_size_freq', 5, 50),
+         'min_voxels': hp.uniform('min_voxels', 1, 150),  # hp.uniform('min_voxels', 50, 150)
          'dilation_max_spatial': hp.uniform('dilation_max_spatial', .5, 20),
          'dilation_max_freq': hp.uniform('dilation_max_freq', .5, 20),
-         'mask_threshold': hp.uniform('mask_threshold', 0, 1),
+         'mask_threshold': hp.uniform('mask_threshold', .1, 1),
          }
 
 start_values = [{'radius_spatial': 10,

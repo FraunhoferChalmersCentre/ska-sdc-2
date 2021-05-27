@@ -210,8 +210,8 @@ class TrainSegmenter(BaseSegmenter):
         if self.random_rotation:
             for i in range(len(x)):
                 k = np.random.randint(0, 4)
-                x[i] = torch.rot90(x[i], k, [2, 3])
-                y[i] = torch.rot90(y[i], k, [2, 3])
+                x[i] = torch.rot90(x[i], k, [1, 2])
+                y[i] = torch.rot90(y[i], k, [1, 2])
 
         if self.random_flip:
             for i in range(len(x)):
@@ -227,11 +227,15 @@ class TrainSegmenter(BaseSegmenter):
         y_hat = self(x, f_channels)
         del f_channels
 
-        effective_y_hat = y_hat[:, :, self.tr_pad:-self.tr_pad, self.tr_pad:-self.tr_pad,
-                          self.tr_pad:-self.tr_pad].clone()
-        del y_hat
-        effective_y = y[:, :, self.tr_pad:-self.tr_pad, self.tr_pad:-self.tr_pad, self.tr_pad:-self.tr_pad].clone()
-        del y
+        if self.tr_pad > 0:
+            effective_y_hat = y_hat[:, :, self.tr_pad:-self.tr_pad, self.tr_pad:-self.tr_pad,
+                              self.tr_pad:-self.tr_pad].clone()
+            del y_hat
+            effective_y = y[:, :, self.tr_pad:-self.tr_pad, self.tr_pad:-self.tr_pad, self.tr_pad:-self.tr_pad].clone()
+            del y
+        else:
+            effective_y_hat, effective_y = y_hat, y
+
         loss = self.loss_fct(effective_y_hat, effective_y)
         # Logging to TensorBoard by default
         self.log('train_loss', loss, on_epoch=True, on_step=False)
@@ -269,25 +273,22 @@ class TrainSegmenter(BaseSegmenter):
 
         parametrized_df = parametrise_sources(self.header, clipped_input.T, mask.T, batch['position'],
                                               self.sofia_parameters, padding)
-        sources_found = len(
-            parametrized_df) > 0  # parametrisation_validation(self.header, parametrized_df, batch, has_source)
+        any_sources_found = len(parametrized_df) > 0
 
-        has_source, sources_found = tuple(
-            map(lambda t: torch.tensor(t, device=self.device).view(-1), (has_source, sources_found)))
-
-        for metric, f in self.sofia_metrics.items():
-            f(sources_found, has_source)
-            self.log('sofia_{}'.format(metric), f, on_epoch=True)
+        has_source, any_sources_found = tuple(
+            map(lambda t: torch.tensor(t, device=self.device).view(-1), (has_source, any_sources_found)))
 
         points = 0
         predictions = None
+        source_found = torch.tensor(False, device=self.device).view(-1)
 
-        if has_source and sources_found:
+        if has_source and any_sources_found:
             n_matched, scores, predictions = score_source(self.header, batch, parametrized_df)
 
             self.log('score_n_matches', n_matched, on_step=True, on_epoch=True)
 
             if n_matched > 0:
+                source_found = torch.tensor(True, device=self.device).view(-1)
                 self.log('n_found', torch.ones(1), on_step=False, on_epoch=True, reduce_fx=torch.sum,
                          tbptt_reduce_fx=torch.sum)
 
@@ -301,11 +302,16 @@ class TrainSegmenter(BaseSegmenter):
 
             points -= (len(parametrized_df) - n_matched)
 
-        if not has_source and sources_found:
-            points = -len(parametrized_df) * 3.5
+        if not has_source and any_sources_found:
+            points = -len(parametrized_df)
+            source_found = torch.tensor(True, device=self.device).view(-1)
 
         self.log('point', torch.tensor(points), on_step=True, on_epoch=True, reduce_fx=torch.sum,
                  tbptt_reduce_fx=torch.sum)
+
+        for metric, f in self.sofia_metrics.items():
+            f(source_found, has_source)
+            self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
         if self.dataset_surrogates:
             return model_out, clipped_segmap
@@ -323,7 +329,7 @@ class TrainSegmenter(BaseSegmenter):
             model_outs = torch.cat(tuple([p[0].view(-1) for p in validation_step_outputs])).view(1, 1, -1)
             segmaps = torch.cat(tuple([p[1].view(-1) for p in validation_step_outputs])).view(1, 1, -1)
             for surrogate, f in self.surrogates.items():
-                self.log(surrogate, f(model_outs, segmaps.float()), on_epoch=True)
+                self.log(surrogate, f(model_outs, segmaps), on_epoch=True)
 
             return
 
@@ -365,10 +371,10 @@ class TrainSegmenter(BaseSegmenter):
         intensities = np.array([np.prod(a.shape) for a in self.training_set.get_attribute('image')])
         sampler = EquiBatchBootstrapSampler(index, len(self.training_set), self.batch_size,
                                             bootstrap=self.bootstrap_sampling, intensities=intensities)
-        return DataLoader(self.training_set, sampler=sampler, batch_size=self.batch_size, shuffle=False)
+        return DataLoader(self.training_set, batch_size=self.batch_size, shuffle=False, sampler=sampler)
 
     def val_dataloader(self):
-        return DataLoader(self.validation_set, batch_size=1, sampler=SortedSampler(self.validation_set))
+        return DataLoader(self.validation_set, batch_size=1, shuffle=False, sampler=SortedSampler(self.validation_set))
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr)
