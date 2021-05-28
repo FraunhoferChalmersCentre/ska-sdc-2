@@ -107,7 +107,6 @@ segmenter.eval()
 trainer = pl.Trainer(gpus=1)
 
 trainer.validate(segmenter)
-test.delete_key('segmentmap')
 
 # %%
 
