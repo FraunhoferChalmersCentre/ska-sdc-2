@@ -13,7 +13,7 @@ import numpy as np
 
 from definitions import config, ROOT_DIR
 from pipeline.segmenter import BaseSegmenter
-from training.segmentation import SortedSampler
+from training.train_segmenter import SortedSampler
 from utils.clip import partition_overlap, cube_evaluation, connect_outputs
 
 from pipeline.downstream import parametrise_sources
@@ -22,13 +22,23 @@ from utils.scoring import score_source
 
 
 class ValidationOutputSaveSegmenter(BaseSegmenter):
-    def __init__(self, base: BaseSegmenter, validation_set: AbstractSKADataset):
+    def __init__(self, base: BaseSegmenter, validation_set: AbstractSKADataset, header: Header):
         super().__init__(base.model, base.scale, base.mean, base.std)
+        self.header = header
         self.validation_set = validation_set
+        self.sofia_parameters = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])
+
+        self.sofia_parameters['merge']['radiusX'] = 1
+        self.sofia_parameters['merge']['radiusY'] = 1
+        self.sofia_parameters['merge']['radiusZ'] = 1
+        self.sofia_parameters['merge']['minSizeX'] = 1
+        self.sofia_parameters['merge']['minSizeY'] = 1
+        self.sofia_parameters['merge']['minSizeZ'] = 1
+        self.sofia_parameters['merge']['minVoxels'] = 1
+        self.sofia_parameters['parameters']['dilatePixMax'] = 0
+        self.sofia_parameters['parameters']['dilateChanMax'] = 0
 
     def validation_step(self, batch, batch_idx):
-        # IMPORTANT: Single batch assumed when validating
-
         # Compute padding
         dim = (np.array(self.validation_set.get_attribute('dim')) * 2).astype(np.int32)
         padding = (dim / 4).astype(np.int32)
@@ -41,10 +51,19 @@ class ValidationOutputSaveSegmenter(BaseSegmenter):
                                                     overlaps_partition[0], self)
 
         model_out = connect_outputs(torch.squeeze(batch['image']), outputs, efficient_slices, padding)
-        return model_out.view(1, *model_out.shape)
+        model_out = model_out
+
+        clipped_input = batch['image'][0, 0][[slice(p, - p) for p in padding]]
+        clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
+        segmap_sources = parametrise_sources(self.header, clipped_input.T, clipped_segmap.T, batch['position'],
+                                             self.sofia_parameters, padding)
+        return model_out.view(1, *model_out.shape), max(len(segmap_sources), 1)
 
     def validation_epoch_end(self, outputs) -> None:
-        self.validation_set.add_attribute({'model_out': outputs}, ['model_out'], ['model_out'])
+        model_out = [p[0] for p in outputs]
+        n_sources = [p[1] for p in outputs]
+        self.validation_set.add_attribute({'model_out': model_out}, ['model_out'], ['model_out'])
+        self.validation_set.add_attribute({'n_sources': n_sources}, ['n_sources'], ['n_sources'])
 
     def val_dataloader(self):
         return DataLoader(self.validation_set, batch_size=1, shuffle=False)
@@ -81,10 +100,7 @@ class HyperoptSegmenter(pl.LightningModule):
 
         has_source = batch_idx < self.validation_set.get_attribute('index')
         clipped_input = torch.empty(batch['model_out'].shape, device=self.device)
-        try:
-            clipped_input[0, 0] = batch['image'][0, 0][[slice(p, - p) for p in padding]]
-        except Exception as err:
-            print(err)
+        clipped_input[0, 0] = batch['image'][0, 0][[slice(p, - p) for p in padding]]
 
         parametrized_df = parametrise_sources(self.header, clipped_input.T, mask.T, batch['position'],
                                               self.sofia_parameters, padding)
@@ -116,7 +132,8 @@ class HyperoptSegmenter(pl.LightningModule):
             else:
                 points = 0
 
-            points -= (len(parametrized_df) - n_matched)
+            if len(parametrized_df) > batch['n_sources']:
+                points -= (len(parametrized_df) - batch['n_sources'])
 
         if not has_source and sources_found:
             points = -len(parametrized_df)

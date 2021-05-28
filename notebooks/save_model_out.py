@@ -28,7 +28,7 @@ size = 'dev_s'
 prob = 50
 
 directory = filename.processed.dataset(size, prob)
-dataset = filehandling.read_splitted_dataset(directory)
+dataset = filehandling.read_splitted_dataset(directory, limit_files=5)
 
 # Split to train & test
 
@@ -89,7 +89,7 @@ else:
     pickle.dump({'scale': scale, 'mean': mean, 'std': std}, open(ROOT_DIR + "/saved_models/statistic.p", 'wb'))
 
 # %%
-state_dict = torch.load(ROOT_DIR + '/saved_models/resnet18-15-epoch=359-val_loss=1.11.ckpt')['state_dict']
+state_dict = torch.load(ROOT_DIR + '/saved_models/resnet18-15-epoch=109-val_loss=0.67.ckpt')['state_dict']
 state_dict = {k: v for k, v in state_dict.items() if k.startswith('model')}
 # %%
 
@@ -100,7 +100,7 @@ from training.hyperopt_segmenter import ValidationOutputSaveSegmenter
 
 base_segmenter = BaseSegmenter(model, train.get_attribute('scale'), train.get_attribute('mean'),
                                train.get_attribute('std'))
-segmenter = ValidationOutputSaveSegmenter(base_segmenter, test)
+segmenter = ValidationOutputSaveSegmenter(base_segmenter, test, header)
 segmenter.load_state_dict(state_dict)
 segmenter.eval()
 
