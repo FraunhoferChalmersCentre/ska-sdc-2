@@ -1,6 +1,6 @@
 import torch
 from itertools import starmap
-from pipeline.segmenter import BaseSegmenter
+from pipeline.segmentation.base import BaseSegmenter
 import numpy as np
 
 

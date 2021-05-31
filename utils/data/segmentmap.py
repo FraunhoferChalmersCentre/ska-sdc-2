@@ -17,7 +17,7 @@ from definitions import config, logger
 SPEED_OF_LIGHT = 3e5
 ALPHA = .2
 
-segmap_config = config['training']['target']
+segmap_config = config['segmentation']['target']
 
 PADDING = 5
 

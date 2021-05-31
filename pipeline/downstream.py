@@ -3,6 +3,7 @@ from typing import Dict
 
 import numpy as np
 from astropy.wcs import WCS
+from numpy.linalg import LinAlgError
 from sofia import linker, parametrisation, readoptions
 import pandas as pd
 from sklearn.decomposition import PCA
@@ -31,26 +32,33 @@ def estimate_axes(mask: np.ndarray):
     positions = np.argwhere(mask_2d > 0)
     if len(positions) < 3:
         return None, None
-    pca = PCA(n_components=2).fit(positions)
+    try:
+        pca = PCA(n_components=2).fit(positions)
 
-    return pca.explained_variance_[0], pca.explained_variance_[1]
+        return pca.explained_variance_[0], pca.explained_variance_[1]
+    except LinAlgError:
+        return 0, 0
 
 
 def estimate_angle(mask: np.ndarray):
     positions = np.argwhere(mask != 0)
     if len(positions) < 4:
         return None
-    pca = PCA(n_components=3).fit(positions)
+    try:
+        pca = PCA(n_components=3).fit(positions)
 
-    angle = np.rad2deg(np.arctan2(pca.components_[0, 1], pca.components_[0, 2]))
+        angle = np.rad2deg(np.arctan2(pca.components_[0, 1], pca.components_[0, 2]))
 
-    if pca.components_[0, 0] > 0:
-        angle += 180
+        if pca.components_[0, 0] > 0:
+            angle += 180
 
-    angle -= 90
-    angle = angle % 360
+        angle -= 90
+        angle = angle % 360
 
-    return angle
+        return angle
+
+    except LinAlgError:
+        return 0
 
 
 def remove_non_reliable(objects, mask, catParNames, catParFormt, catParUnits):

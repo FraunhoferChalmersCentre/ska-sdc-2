@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, List, Iterable
+from typing import Any, List
 from itertools import starmap
 
 import pandas as pd
@@ -15,12 +15,12 @@ from astropy.io import fits
 import matplotlib.pyplot as plt
 
 from definitions import config, ROOT_DIR
-from pipeline.segmenter import BaseSegmenter
+from pipeline.segmentation.base import BaseSegmenter
 from utils.clip import partition_overlap, cube_evaluation, connect_outputs
 
 from pipeline.downstream import parametrise_sources
 from utils.data.ska_dataset import AbstractSKADataset
-from utils.scoring import score_source, parametrisation_validation, ANGLE_SCATTER_ATTRS, LINEAR_SCATTER_ATTRS
+from utils.scoring import score_source, ANGLE_SCATTER_ATTRS, LINEAR_SCATTER_ATTRS
 
 
 class SortedSampler(Sampler):
@@ -76,58 +76,51 @@ class EquiBatchBootstrapSampler(Sampler):
         return iter(batched_indices)
 
 
-def get_random_vis_id(dataset, shape, min_allocated, random_state=np.random.RandomState()):
-    vis_id = None
-
-    pos = dataset.get_attribute('position')
-    alloc = dataset.get_attribute('allocated_voxels')
-    while vis_id is None:
-        random_id = random_state.randint(0, dataset.get_attribute('index'))
-        candidate = True
-        for r in pos[random_id].squeeze():
-
-            for c, s in zip(r, shape):
-                if torch.eq(c, 0) or torch.eq(c, s):
-                    candidate = False
-
-        if candidate and alloc[random_id].shape[0] > min_allocated:
-            vis_id = random_id
-
-    return vis_id
-
-
 class TrainSegmenter(BaseSegmenter):
-    def __init__(self, base: BaseSegmenter, loss_fct: Any, training_set: AbstractSKADataset,
-                 validation_set: AbstractSKADataset, header: fits.Header, batch_size=128, x_key='image',
-                 y_key='segmentmap', vis_max_angle=180, vis_rotations=4, vis_id=None, threshold=None, lr=1e-2,
-                 momentum=.9, sofia_parameters=None, dataset_surrogates=True, bootstrap_sampling=True,
-                 sofia_validation_interval=None, train_padding=4, random_rotation=True, random_mirror=True, name=None):
+    def __init__(self, base: BaseSegmenter,
+                 loss_fct: Any,
+                 training_set: AbstractSKADataset,
+                 validation_set: AbstractSKADataset,
+                 header: fits.Header,
+                 optimizer: torch.optim.Optimizer,
+                 batch_size=128,
+                 robust_validation=False,
+                 vis_max_angle=180,
+                 vis_rotations=4,
+                 vis_id=None,
+                 threshold=None,
+                 sofia_parameters=None,
+                 dataset_surrogates=True,
+                 sampler=None,
+                 sofia_validation_interval=None,
+                 train_padding=0,
+                 random_rotation=True,
+                 random_mirror=True,
+                 name=None):
         super().__init__(base.model, base.scale, base.mean, base.std)
 
+        self.robust_validation = robust_validation
         self.name = name
         self.tr_pad = train_padding
         self.header = header
         self.batch_size = batch_size
         self.validation_set = validation_set
         self.training_set = training_set
-        self.y_key = y_key
-        self.x_key = x_key
         self.loss_fct = loss_fct
         self.vis_rotations = vis_rotations
         self.vis_max_angle = vis_max_angle
-        self.lr = lr
-        self.momentum = momentum
+        self.optimizer = optimizer
 
         self.vis_id = vis_id
         self.threshold = threshold
 
-        self.pixel_precision = pl.metrics.Precision(num_classes=1, is_multiclass=False)
-        self.pixel_recall = pl.metrics.Recall(num_classes=1, is_multiclass=False)
-        self.pixel_dice = pl.metrics.F1(num_classes=1)
+        self.pixel_precision = pl.metrics.Precision(num_classes=1, multiclass=False)
+        self.pixel_recall = pl.metrics.Recall(num_classes=1, multiclass=False)
+        self.pixel_dice = pl.metrics.F1(num_classes=1, multiclass=False)
 
-        self.sofia_precision = pl.metrics.Precision(num_classes=1, is_multiclass=False)
-        self.sofia_recall = pl.metrics.Recall(num_classes=1, is_multiclass=False)
-        self.sofia_dice = pl.metrics.F1(num_classes=1)
+        self.sofia_precision = pl.metrics.Precision(num_classes=1, multiclass=False)
+        self.sofia_recall = pl.metrics.Recall(num_classes=1, multiclass=False)
+        self.sofia_dice = pl.metrics.F1(num_classes=1, multiclass=False)
 
         self.pixel_metrics = {
             'precision': self.pixel_precision,
@@ -159,7 +152,7 @@ class TrainSegmenter(BaseSegmenter):
             self.sofia_parameters = sofia_parameters
 
         self.dataset_surrogates = dataset_surrogates
-        self.bootstrap_sampling = bootstrap_sampling
+        self.sampler = sampler
         self.sofia_validation_interval = sofia_validation_interval
         self.random_rotation = random_rotation
         self.random_flip = random_mirror
@@ -169,19 +162,19 @@ class TrainSegmenter(BaseSegmenter):
         self.log_prediction_image()
 
     def log_image(self):
-        image = self.validation_set.get_attribute(self.x_key)[self.vis_id].squeeze()
+        image = self.validation_set.get_attribute('image')[self.vis_id].squeeze()
         slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d), int(s / 2 - d) + 2 * d),
                                zip(image.shape, self.validation_set.get_attribute('dim'))))
         normed_img = (image[slices] - image[slices].min()) / (image[slices].max() - image[slices].min())
-        self._log_cross_sections(normed_img, self.validation_set[self.vis_id]['pa'], self.x_key)
-        segmap = self.validation_set.get_attribute(self.y_key)[self.vis_id].squeeze()
+        self._log_cross_sections(normed_img, self.validation_set[self.vis_id]['pa'], 'image')
+        segmap = self.validation_set.get_attribute('segmentmap')[self.vis_id].squeeze()
         if segmap.sum() == 0:
             raise ValueError('Logged segmentmap contains no source voxels. Reshuffle!')
 
-        self._log_cross_sections(segmap[slices], self.validation_set[self.vis_id]['pa'], self.y_key)
+        self._log_cross_sections(segmap[slices], self.validation_set[self.vis_id]['pa'], 'segmentmap')
 
     def log_prediction_image(self):
-        image = self.validation_set.get_attribute(self.x_key)[self.vis_id].squeeze()
+        image = self.validation_set.get_attribute('image')[self.vis_id].squeeze()
         position = self.validation_set.get_attribute('position')[self.vis_id]
         slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d), int(s / 2 - d) + 2 * d),
                                zip(image.shape, self.validation_set.get_attribute('dim'))))
@@ -205,7 +198,7 @@ class TrainSegmenter(BaseSegmenter):
     def training_step(self, batch, batch_idx):
         # training_step defined the train loop.
         # It is independent of forward
-        x, y = batch[self.x_key], batch[self.y_key]
+        x, y = batch['image'].clone(), batch['segmentmap'].clone()
 
         if self.random_rotation:
             for i in range(len(x)):
@@ -243,6 +236,23 @@ class TrainSegmenter(BaseSegmenter):
         return loss
 
     def validation_step(self, batch, batch_idx):
+        if self.robust_validation:
+            return self.validation_step_robust(batch, batch_idx)
+        else:
+            return self.validation_step_simple(batch, batch_idx)
+
+    def validation_step_simple(self, batch, batch_idx):
+        x, y = batch['image'], batch['segmentmap']
+        f_channels = torch.empty((x.shape[0], 2), device=self.device)
+        for i in range(x.shape[0]):
+            f_channels[i, 0] = batch['position'][i, 0, -1] + batch['slices'][i][0][-1]
+            f_channels[i, 1] = batch['position'][i, 0, -1] + batch['slices'][i][1][-1]
+
+        y_hat = self(x, f_channels)
+
+        return y_hat, y
+
+    def validation_step_robust(self, batch, batch_idx):
         # IMPORTANT: Single batch assumed when validating
 
         # Compute padding
@@ -322,6 +332,7 @@ class TrainSegmenter(BaseSegmenter):
         pass
 
     def validation_epoch_end(self, validation_step_outputs):
+
         if len(validation_step_outputs) == 0:
             return
 
@@ -333,7 +344,7 @@ class TrainSegmenter(BaseSegmenter):
 
             return
 
-        if config['training']['save_plots']:
+        if self.robust_validation and config['segmentation']['save_plots']:
             predictions = {k + '_pred': [v[k][0] for v in validation_step_outputs] for k in
                            validation_step_outputs[0].keys()}
             true_values = {k + '_true': [v[k][1] for v in validation_step_outputs] for k in
@@ -367,14 +378,17 @@ class TrainSegmenter(BaseSegmenter):
         self.log_prediction_image()
 
     def train_dataloader(self):
-        index = self.training_set.get_attribute('index')
-        intensities = np.array([np.prod(a.shape) for a in self.training_set.get_attribute('image')])
-        sampler = EquiBatchBootstrapSampler(index, len(self.training_set), self.batch_size,
-                                            bootstrap=self.bootstrap_sampling, intensities=intensities)
-        return DataLoader(self.training_set, batch_size=self.batch_size, shuffle=False, sampler=sampler)
+        if self.sampler is not None:
+            return DataLoader(self.training_set, batch_size=self.batch_size, sampler=self.sampler, shuffle=False)
+        else:
+            return DataLoader(self.training_set, batch_size=self.batch_size, shuffle=True)
 
     def val_dataloader(self):
-        return DataLoader(self.validation_set, batch_size=1, shuffle=False, sampler=SortedSampler(self.validation_set))
+        if self.robust_validation:
+            return DataLoader(self.validation_set, batch_size=1, shuffle=False,
+                              sampler=SortedSampler(self.validation_set))
+        else:
+            return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=False)
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        return self.optimizer

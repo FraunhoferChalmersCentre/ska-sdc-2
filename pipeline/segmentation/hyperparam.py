@@ -1,8 +1,3 @@
-from datetime import datetime
-from typing import Any, List, Iterable
-from itertools import starmap
-
-import pandas as pd
 import pytorch_lightning as pl
 import torch
 from astropy.io.fits import Header
@@ -12,8 +7,8 @@ from torch.utils.data import DataLoader
 import numpy as np
 
 from definitions import config, ROOT_DIR
-from pipeline.segmenter import BaseSegmenter
-from training.train_segmenter import SortedSampler
+from pipeline.segmentation.base import BaseSegmenter
+from pipeline.segmentation.training import SortedSampler
 from utils.clip import partition_overlap, cube_evaluation, connect_outputs
 
 from pipeline.downstream import parametrise_sources
@@ -76,9 +71,9 @@ class HyperoptSegmenter(pl.LightningModule):
 
         self.header = header
         self.validation_set = validation_set
-        self.sofia_precision = pl.metrics.Precision(num_classes=1, is_multiclass=False)
-        self.sofia_recall = pl.metrics.Recall(num_classes=1, is_multiclass=False)
-        self.sofia_dice = pl.metrics.F1(num_classes=1)
+        self.sofia_precision = pl.metrics.Precision(num_classes=1, multiclass=False)
+        self.sofia_recall = pl.metrics.Recall(num_classes=1, multiclass=False)
+        self.sofia_dice = pl.metrics.F1(num_classes=1, multiclass=False)
 
         self.sofia_metrics = {
             'precision': self.sofia_precision,
@@ -132,8 +127,13 @@ class HyperoptSegmenter(pl.LightningModule):
             else:
                 points = 0
 
-            if len(parametrized_df) > batch['n_sources']:
-                points -= (len(parametrized_df) - batch['n_sources'])
+        clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
+        for i, row in parametrized_df.iterrows():
+            if clipped_segmap[int(row.x), int(row.y), int(row.z)] == 0:
+                for metric, f in self.sofia_metrics.items():
+                    f(torch.tensor(True), torch.tensor(False))
+                    self.log('sofia_{}'.format(metric), f, on_epoch=True)
+                points -= 1
 
         if not has_source and sources_found:
             points = -len(parametrized_df)

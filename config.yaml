@@ -5,20 +5,29 @@ path:
   processed: ./processed/
   models: ./saved_models/
 
+data:
+  splitsize: 60
+  memory_batches: 20
+
 training:
+  size: dev_s
+  limit_files: null
+  model_name: resnet18
   filtering:
-    fraction:
-        training: 1.
-        validation: .3
-    power_measure: line_flux_integral # Column to use for filtering data to training
+    training: null
+    validation: null
+    power_measure: line_flux_integral # Column to use for filtering data to segmentation
   target:
     smoothing_fwhm: 0 # FWHM in arcsec of Gaussian for smoothing segmap. 7 according to data description, 0 = no smoothing.
-    min_value: .1 # Minimum voxel value in final segmentmap used for training
+    min_value: .1 # Minimum voxel value in final segmentmap used for segmentation
     padding: 1 # Padding around minor axis as relative length of major axis. 0 is X-shape segmentmap, 1 means full cylinder
   cube_size:
     spatial: 32
     freq: 32
   save_plots: False
+  augmentation: True
+  batch_size: 128
+  robust_validation: False
 
 downstream:
   sofia:
@@ -42,9 +51,6 @@ scoring:
     'i': 10.
     'w20': .3
 
-torch:
-  num_workers: 0 # Ignored if CPU is used, larger values require more RAM
-
 characteristic_parameters:
   - ra
   - dec
@@ -57,3 +63,6 @@ characteristic_parameters:
 
 hyperparameters:
   threshold: 0.5
+
+traversing:
+  checkpoint: null

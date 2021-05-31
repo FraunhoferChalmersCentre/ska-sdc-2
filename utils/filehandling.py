@@ -10,7 +10,6 @@ from utils.data.splitting import merge
 
 def read_splitted_dataset(directory: str, limit_files: int = None):
     files = glob.glob(directory + '/*.pt')
-    #random.shuffle(files)
 
     dataset_splits_dict = dict()
     for i, f in enumerate(tqdm(files)):

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from pipeline.segmenter import BaseSegmenter
+from pipeline.segmentation.base import BaseSegmenter
 from torch import nn
 from pipeline.downstream import parametrise_sources
 from definitions import config
