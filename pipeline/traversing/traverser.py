@@ -52,7 +52,8 @@ class EvaluationTraverser(ModelTraverser):
         self.cube_shape = np.array(list(map(lambda x: header[x], ['NAXIS1', 'NAXIS2', 'NAXIS3'])))
         self.header = header
         self.data_cache = CubeCache(fits_file)
-        slices_partition = partition_expanding(self.cube_shape, desired_dim + 2*cnn_padding, cnn_padding + sofia_padding)
+        slices_partition = partition_expanding(self.cube_shape, desired_dim + 2 * cnn_padding,
+                                               cnn_padding + sofia_padding)
         self.slices_partition = np.array_split(slices_partition[0], self.n_parallel)[self.i_job]
         if df_name is None:
             df_name = ''
@@ -73,12 +74,13 @@ class EvaluationTraverser(ModelTraverser):
                 self.data_cache.cache_data(slices)
                 hi_cube_tensor = self.data_cache.get_hi_data()
                 position = np.array([[s.start, s.stop] for s in slices]).T
-                overlap_slices_partition, overlaps_partition = partition_overlap(position[1]-position[0],
+                overlap_slices_partition, overlaps_partition = partition_overlap(position[1] - position[0],
                                                                                  self.model_input_dim,
                                                                                  self.cnn_padding, self.max_batch_size)
                 outputs = list()
                 efficient_slices = list()
-                for overlap_slices, overlaps in zip(tqdm(overlap_slices_partition, overlaps_partition)):
+                for overlap_slices, overlaps in tqdm(zip(overlap_slices_partition, overlaps_partition),
+                                                     total=len(overlap_slices_partition)):
                     try:
                         o, e = cube_evaluation(hi_cube_tensor, self.model_input_dim, self.cnn_padding, position,
                                                overlap_slices, overlaps, self.model)
@@ -96,8 +98,8 @@ class EvaluationTraverser(ModelTraverser):
                 hi_cube_tensor = hi_cube_tensor[inner_slices]
 
                 # Convert to numpy for Sofia
-                partition_position = torch.tensor([[s.start+p for s, p in zip(slices, self.cnn_padding)],
-                                                   [s.stop-p for s, p in zip(slices, self.cnn_padding)]])
+                partition_position = torch.tensor([[s.start + p for s, p in zip(slices, self.cnn_padding)],
+                                                   [s.stop - p for s, p in zip(slices, self.cnn_padding)]])
                 prediction = parametrise_sources(self.header, hi_cube_tensor.T, mask.T, partition_position)
 
                 # Filter Desired Characteristics and Non-edge-padding
@@ -155,7 +157,7 @@ class CubeCache:
     def cache_data(self, slices):
         if self.gradual_loading:
             f0, f1 = slices[-1].start, slices[-1].stop
-            self.hi_cube_tensor = torch.empty(tuple(map(lambda x: x.stop-x.start, slices)))
+            self.hi_cube_tensor = torch.empty(tuple(map(lambda x: x.stop - x.start, slices)))
             for i, f in enumerate(range(f0, f1)):
                 hi_data_fits = fits.getdata(self.fits_file, ignore_blank=True)
                 self.hi_cube_tensor[:, :, i] = torch.tensor(hi_data_fits[f].astype(np.float32),
@@ -163,13 +165,14 @@ class CubeCache:
         else:
             hi_data_fits = fits.getdata(self.fits_file, ignore_blank=True)
             f0, f1 = slices[-1].start, slices[-1].stop
-            self.hi_cube_tensor = torch.tensor(hi_data_fits[f0:f1].astype(np.float32), dtype=torch.float32).T[slices[:2]]
+            self.hi_cube_tensor = torch.tensor(hi_data_fits[f0:f1].astype(np.float32), dtype=torch.float32).T[
+                slices[:2]]
 
 
 def remove_non_edge_padding(slices, cube_shape, cnn_padding, sofia_padding, df):
     rpositions = np.round(df[['x_geo', 'y_geo', 'z_geo']].values)
     l_padd = np.array([0 if s.start == 0 else sp for s, c, sp in zip(slices, cube_shape, sofia_padding)])
-    u_padd = np.array([c if s.stop == c else s.stop - s.start - sp - 2*cp for s, sp, cp, c in
+    u_padd = np.array([c if s.stop == c else s.stop - s.start - sp - 2 * cp for s, sp, cp, c in
                        zip(slices, sofia_padding, cnn_padding, cube_shape)])
     df_filter = np.all(np.logical_and(rpositions >= l_padd, rpositions <= u_padd), axis=1)
     return df[df_filter]
