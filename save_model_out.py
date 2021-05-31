@@ -9,10 +9,10 @@ import pytorch_lightning as pl
 
 from pipeline.common import filename
 from pipeline.segmentation.utils import get_data, get_checkpoint_callback, get_state_dict, get_base_segmenter
-from pipeline.hyperparameter.validation import ValidationOutputSaveSegmenter
+from pipeline.hyperparameter.lightning_modules import ValidationOutputSaveSegmenter
 from definitions import config
 
-validation_set = get_data(only_validation=True)
+validation_set = get_data(only_validation=True, robust_validation=True)
 checkpoint_callback = get_checkpoint_callback()
 base_segmenter = get_base_segmenter()
 

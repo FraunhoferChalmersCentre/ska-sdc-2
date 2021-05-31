@@ -7,7 +7,7 @@ from hyperopt import hp, fmin, tpe
 from definitions import config
 from pipeline.data.ska_dataset import SKADataSet, ValidationItemGetter
 from pipeline.common import filename
-from pipeline.hyperparameter.validation import HyperoptSegmenter
+from pipeline.hyperparameter.lightning_modules import HyperoptSegmenter
 from pipeline.hyperparameter.tuning import Tuner
 
 size = config['segmentation']['size']

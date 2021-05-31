@@ -31,7 +31,7 @@ class ModelsFileName(DirectoryFileName):
         return self.by_id(self.new_id)
 
     def new_id(self):
-        return len([name for name in os.listdir('') if os.path.isfile(name)])
+        return len([name for name in os.listdir(self.directory) if os.path.isfile(name)])
 
     def by_id(self, id):
         return self.get_path('{}.pt'.format(id))
