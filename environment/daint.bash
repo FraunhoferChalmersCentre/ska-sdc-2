@@ -27,6 +27,19 @@ then
 	source $HOME/env/bin/activate
 	pip install ipykernel==5.1.1 --no-deps
 	pip install -r $HOME/ska-sdc-2/environment/requirements.txt
+	
+	# Install SoFiA
+	cur_dir=$PWD
+	cd $HOME
+	wget https://github.com/SoFiA-Admin/SoFiA/archive/refs/tags/v1.3.2.tar.gz
+	tar -xzvf v1.3.2.tar.gz
+	cd SoFiA-1.3.2
+	rm -rf build
+	python setup.py build --force --no-gui=True
+	cp -r build/lib.linux-x86_64-3.8/sofia $HOME/env/lib/python3.8/site-packages/sofia
+	rm v1.3.2.tar.gz
+	cd $cur_dir
+
 	module load jupyter-utils
 	kernel-create -f -n env
 	cp $HOME/ska-sdc-2/environment/launcher $HOME/.local/share/jupyter/kernels/env/launcher
