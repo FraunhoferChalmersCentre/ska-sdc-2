@@ -67,3 +67,4 @@ hyperparameters:
 traversing:
   fits_file: null
   checkpoint: null
+  gpu_memory_max: 7000

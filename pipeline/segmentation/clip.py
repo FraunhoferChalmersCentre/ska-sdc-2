@@ -97,7 +97,7 @@ def cube_evaluation(cube, dim, padding, position, overlap_slices, overlaps, mode
 
     padding_slices = list()
 
-    for i, ovs in enumerate(tqdm(overlap_slices)):
+    for i, ovs in enumerate(overlap_slices):
         model_input[i, 0] = cube[ovs]
         frequency_channels[i, :] = torch.tensor([position[0, -1] + ovs[-1].start,
                                                  position[0, -1] + ovs[-1].stop])

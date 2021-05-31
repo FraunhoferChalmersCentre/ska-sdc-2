@@ -24,9 +24,8 @@ cnn_padding = np.array([8, 8, 8])
 desired_dim = 4 * (model_input_dim - 2 * cnn_padding)
 
 sofia_padding = np.array([8, 8, 50])
-gpu_memory_mib = 15000
 
-mbatch = max_batch_size(segmenter.model, model_input_dim, gpu_memory_mib)
+mbatch = max_batch_size(segmenter.model, model_input_dim, config['traversing']['gpu_memory_max'])
 
 evaluator = EvaluationTraverser(segmenter, fits_file, model_input_dim, desired_dim, cnn_padding,
                                 sofia_padding, mbatch)

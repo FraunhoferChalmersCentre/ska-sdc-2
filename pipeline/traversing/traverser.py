@@ -68,7 +68,7 @@ class EvaluationTraverser(ModelTraverser):
         else:
             df = pd.DataFrame()
 
-        for j, slices in tqdm(enumerate(self.slices_partition)):
+        for j, slices in enumerate(self.slices_partition):
             print('Loop {} of {}'.format(str(j), str(len(self.slices_partition))))
             if j >= self.j_loop:
                 self.data_cache.cache_data(slices)
@@ -80,7 +80,7 @@ class EvaluationTraverser(ModelTraverser):
                 outputs = list()
                 efficient_slices = list()
                 for overlap_slices, overlaps in tqdm(zip(overlap_slices_partition, overlaps_partition),
-                                                     total=len(overlap_slices_partition)):
+                                                     total=len(overlap_slices_partition), desc='Propagating model'):
                     try:
                         o, e = cube_evaluation(hi_cube_tensor, self.model_input_dim, self.cnn_padding, position,
                                                overlap_slices, overlaps, self.model)

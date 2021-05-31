@@ -129,7 +129,8 @@ class HyperoptSegmenter(pl.LightningModule):
 
         clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
         for i, row in parametrized_df.iterrows():
-            if clipped_segmap[int(row.x), int(row.y), int(row.z)] == 0:
+            if clipped_segmap[int(row.x_min):int(row.x_max), int(row.y_min):int(row.y_max),
+               int(row.z_min):int(row.z_max)].sum() == 0:
                 for metric, f in self.sofia_metrics.items():
                     f(torch.tensor(True), torch.tensor(False))
                     self.log('sofia_{}'.format(metric), f, on_epoch=True)

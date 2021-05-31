@@ -13,8 +13,8 @@ class Tuner:
         self.iteration = 0
 
     def tuning_objective(self, args):
+        self.iteration += 1
         try:
-
             with open("notebooks/hyperparams.txt", "a+") as file_object:
                 file_object.write(str(self.iteration) + '\t' + str(args) + '\n')
 
@@ -40,8 +40,6 @@ class Tuner:
             results = trainer.validate(self.segmenter)[0]
 
             points = results['point_epoch']
-
-            self.iteration += 1
 
             return - points
         except Exception as err:
