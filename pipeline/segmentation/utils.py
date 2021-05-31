@@ -8,14 +8,14 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import numpy as np
 
 from pipeline.segmentation.base import BaseSegmenter
-from pipeline.traverse import CubeCache
-from utils import filename
-from utils import filehandling
+from pipeline.traversing.traverser import CubeCache
+from pipeline.common import filename
+from pipeline.common import filehandling
 from definitions import config, ROOT_DIR
 from pipeline.segmentation.convert2Dto3D import Conv3dConverter
 import segmentation_models_pytorch as smp
 
-from utils.data.generating import get_hi_shape
+from pipeline.data.generating import get_hi_shape
 
 
 def get_data(only_validation=False, robust_validation=False):
@@ -25,8 +25,8 @@ def get_data(only_validation=False, robust_validation=False):
     dataset = filehandling.read_splitted_dataset(directory, limit_files=config['segmentation']['limit_files'])
 
     import numpy as np
-    from utils.data import splitting
-    from utils.data.splitting import TrainingItemGetter, ValidationItemGetter
+    from pipeline.data import splitting
+    from pipeline.data.splitting import TrainingItemGetter, ValidationItemGetter
 
     random_state = np.random.RandomState(5)
     val_item_getter = ValidationItemGetter() if robust_validation else TrainingItemGetter()

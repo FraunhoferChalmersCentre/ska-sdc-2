@@ -5,10 +5,10 @@ from astropy.io.fits import getheader
 from hyperopt import hp, fmin, tpe
 
 from definitions import config
-from utils.data.ska_dataset import SKADataSet, ValidationItemGetter
-from utils import filename
-from pipeline.segmentation.hyperparam import HyperoptSegmenter
-from utils.hyperparams import Tuner
+from pipeline.data.ska_dataset import SKADataSet, ValidationItemGetter
+from pipeline.common import filename
+from pipeline.hyperparameter.validation import HyperoptSegmenter
+from pipeline.hyperparameter.tuning import Tuner
 
 size = config['segmentation']['size']
 modelname = config['segmentation']['model_name']

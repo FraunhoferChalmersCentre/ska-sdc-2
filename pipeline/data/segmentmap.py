@@ -4,14 +4,14 @@ from typing import Tuple
 import pickle
 
 import pandas as pd
-from sparse import DOK, COO, save_npz, load_npz
+from sparse import DOK, save_npz, load_npz
 from astropy.io.fits.header import Header
 from astropy.io import fits
 from astropy.wcs import WCS
 import numpy as np
 from skimage import draw, transform, filters
 
-from utils import filename
+from pipeline.common import filename
 from definitions import config, logger
 
 SPEED_OF_LIGHT = 3e5

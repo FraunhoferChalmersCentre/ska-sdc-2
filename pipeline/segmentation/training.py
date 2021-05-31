@@ -16,11 +16,11 @@ import matplotlib.pyplot as plt
 
 from definitions import config, ROOT_DIR
 from pipeline.segmentation.base import BaseSegmenter
-from utils.clip import partition_overlap, cube_evaluation, connect_outputs
+from pipeline.segmentation.clip import partition_overlap, cube_evaluation, connect_outputs
 
 from pipeline.downstream import parametrise_sources
-from utils.data.ska_dataset import AbstractSKADataset
-from utils.scoring import score_source, ANGLE_SCATTER_ATTRS, LINEAR_SCATTER_ATTRS
+from pipeline.data.ska_dataset import AbstractSKADataset
+from pipeline.segmentation.scoring import score_source, ANGLE_SCATTER_ATTRS, LINEAR_SCATTER_ATTRS
 
 
 class SortedSampler(Sampler):

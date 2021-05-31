@@ -1,11 +1,10 @@
 import glob
-import random
 from collections import OrderedDict
 
 import torch
 from tqdm.auto import tqdm
 
-from utils.data.splitting import merge
+from pipeline.data.splitting import merge
 
 
 def read_splitted_dataset(directory: str, limit_files: int = None):

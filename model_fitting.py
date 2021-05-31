@@ -9,8 +9,8 @@ import numpy as np
 
 from definitions import config
 from pipeline.segmentation.training import TrainSegmenter
-from utils import filename
-from pipeline.segmentation import get_data, get_checkpoint_callback, get_random_vis_id, get_base_segmenter
+from pipeline.common import filename
+from pipeline.segmentation.utils import get_data, get_checkpoint_callback, get_random_vis_id, get_base_segmenter
 
 training_set, validation_set = get_data(robust_validation=config['segmentation']['robust_validation'])
 base_segmenter = get_base_segmenter()

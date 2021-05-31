@@ -10,7 +10,7 @@ from astropy.io import fits
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir, os.path.pardir)))
     
-from utils import filename
+from pipeline.common import filename
 
 
 def power_transform(t: np.ndarray, base=100, percentile=99.9):
@@ -52,7 +52,7 @@ for t in args.type:
         header = fits.getheader(filename.data.sky(s))
         data = fits.getdata(filename.data.sky(s))
         transformed = transforms[t](data)
-        fits.writeto(filename.data.transformed(s, t), transformed,header=header, overwrite=True)
-        print(filename.data.transformed(s, t)  + ' was saved to disk.')
+        fits.writeto(filename.data.transformed(s, t), transformed, header=header, overwrite=True)
+        print(filename.data.transformed(s, t) + ' was saved to disk.')
     
         

@@ -1,5 +1,5 @@
 import numpy as np
-from utils.data.splitting import split
+from pipeline.data.splitting import split
 
 
 def test_split():

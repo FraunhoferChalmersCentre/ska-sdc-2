@@ -1,11 +1,11 @@
-from utils import filename
-from pipeline.traverse import EvaluationTraverser
+from pipeline.common import filename
+from pipeline.traversing.traverser import EvaluationTraverser
 import numpy as np
 import torch
 from definitions import config
-from utils.memory import max_batch_size
+from pipeline.traversing.memory import max_batch_size
 
-from utils.training import get_base_segmenter, get_state_dict
+from pipeline.segmentation.utils import get_base_segmenter, get_state_dict
 
 fits_file = filename.data.sky('eval')
 

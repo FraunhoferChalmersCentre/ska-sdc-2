@@ -9,8 +9,8 @@ splitsize = config['data']['splitsize']
 
 import pandas as pd
 
-from utils import filename
-from utils.data.segmentmap import create_from_files
+from pipeline.common import filename
+from pipeline.data import create_from_files
 
 segmentmap, allocation_dict = create_from_files(size, regenerate=True)
 df = pd.read_csv(filename.data.true(size), sep=' ')
@@ -18,7 +18,7 @@ fname = filename.data.sky(size)
 
 # %%
 
-from utils.data.generating import split_by_size
+from pipeline.data import split_by_size
 
 spatial = config['segmentation']['cube_size']['spatial']
 freq = config['segmentation']['cube_size']['freq']

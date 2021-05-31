@@ -190,10 +190,7 @@ def extract_objects(cube: np.ndarray, mask: np.ndarray, Parameters: Dict):
     if len(objects) == 0:
         return mask, mask, pd.DataFrame()
 
-    tic = time.perf_counter()
     dilated_mask, objects = parametrisation.dilate(cube.copy(), mask.copy(), objects, catParNames, Parameters)
-    toc = time.perf_counter()
-    print(f"Dilation performed in {toc - tic:0.4f} seconds")
 
     if len(objects) == 0:
         return mask, mask, pd.DataFrame()
@@ -249,10 +246,7 @@ def parametrise_sources(header, input_cube, mask, position, parameters: Dict = N
 
     obj_mask, dilated_mask, df = extract_objects(input_cube, mask, parameters)
 
-    tic = time.perf_counter()
     df = estimate_object_properties(input_cube, obj_mask, dilated_mask, df)
-    toc = time.perf_counter()
-    print(f"Estimation performed in {toc - tic:0.4f} seconds")
 
     df = compute_challenge_metrics(df, header, position, padding)
 

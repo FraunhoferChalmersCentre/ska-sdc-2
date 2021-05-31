@@ -2,7 +2,7 @@ import os
 import argparse
 
 import wget
-from utils import filename
+from pipeline.common import filename
 from definitions import config, ROOT_DIR
 
 types = ['dev_s', 'dev_l', 'eval']

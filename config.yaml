@@ -9,7 +9,7 @@ data:
   splitsize: 60
   memory_batches: 20
 
-training:
+segmentation:
   size: dev_s
   limit_files: null
   model_name: resnet18

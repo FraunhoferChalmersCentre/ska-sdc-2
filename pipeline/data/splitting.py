@@ -1,12 +1,11 @@
-from collections import OrderedDict
-from typing import Dict, Tuple, List
+from typing import Dict, List
 
 import numpy as np
 import torch
 
-from utils.data.ska_dataset import SKADataSet, StaticSKATransformationDecorator, TrainingItemGetter, \
+from pipeline.data.ska_dataset import SKADataSet, StaticSKATransformationDecorator, TrainingItemGetter, \
     ValidationItemGetter
-from utils.data.generating import COMMON_ATTRIBUTES, SOURCE_ATTRIBUTES, GLOBAL_ATTRIBUTES
+from pipeline.data.generating import COMMON_ATTRIBUTES, SOURCE_ATTRIBUTES, GLOBAL_ATTRIBUTES
 
 
 def to_float(tensors: List[torch.Tensor]): return list(map(lambda t: t.float(), tensors))

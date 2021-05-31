@@ -9,11 +9,11 @@ import numpy as np
 from definitions import config, ROOT_DIR
 from pipeline.segmentation.base import BaseSegmenter
 from pipeline.segmentation.training import SortedSampler
-from utils.clip import partition_overlap, cube_evaluation, connect_outputs
+from pipeline.segmentation.clip import partition_overlap, cube_evaluation, connect_outputs
 
 from pipeline.downstream import parametrise_sources
-from utils.data.ska_dataset import AbstractSKADataset
-from utils.scoring import score_source
+from pipeline.data.ska_dataset import AbstractSKADataset
+from pipeline.segmentation.scoring import score_source
 
 
 class ValidationOutputSaveSegmenter(BaseSegmenter):

@@ -5,7 +5,7 @@ from pipeline.downstream import parametrise_sources
 from definitions import config
 from astropy.io import fits
 import pandas as pd
-from utils.clip import partition_overlap, partition_expanding, cube_evaluation, connect_outputs
+from pipeline.segmentation.clip import partition_overlap, partition_expanding, cube_evaluation, connect_outputs
 import numpy as np
 import pickle
 import torch

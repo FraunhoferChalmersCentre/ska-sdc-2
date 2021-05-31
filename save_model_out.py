@@ -7,9 +7,9 @@ import random
 import glob
 import pytorch_lightning as pl
 
-from utils import filename
-from utils.training import get_data, get_checkpoint_callback, get_state_dict, get_base_segmenter
-from pipeline.segmentation.hyperparam import ValidationOutputSaveSegmenter
+from pipeline.common import filename
+from pipeline.segmentation.utils import get_data, get_checkpoint_callback, get_state_dict, get_base_segmenter
+from pipeline.hyperparameter.validation import ValidationOutputSaveSegmenter
 from definitions import config
 
 validation_set = get_data(only_validation=True)
