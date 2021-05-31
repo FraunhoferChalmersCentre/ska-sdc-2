@@ -7,12 +7,13 @@ from pipeline.traversing.memory import max_batch_size
 
 from pipeline.segmentation.utils import get_base_segmenter, get_state_dict
 
-fits_file = filename.data.sky('eval')
+fits_file = config['traversing']['fits_file']
 
 segmenter = get_base_segmenter()
 device = torch.device('cuda')
 
 state_dict = get_state_dict(config['traversing']['checkpoint'])
+
 segmenter.load_state_dict(state_dict)
 segmenter.to(device)
 torch.cuda.empty_cache()
@@ -23,7 +24,7 @@ cnn_padding = np.array([8, 8, 8])
 desired_dim = 4 * (model_input_dim - 2 * cnn_padding)
 
 sofia_padding = np.array([8, 8, 50])
-gpu_memory_mib = 7000
+gpu_memory_mib = 15000
 
 mbatch = max_batch_size(segmenter.model, model_input_dim, gpu_memory_mib)
 

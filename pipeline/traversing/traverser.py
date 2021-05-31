@@ -9,6 +9,7 @@ from pipeline.segmentation.clip import partition_overlap, partition_expanding, c
 import numpy as np
 import pickle
 import torch
+from tqdm import tqdm
 
 
 class ModelTraverser(ABC):
@@ -66,7 +67,7 @@ class EvaluationTraverser(ModelTraverser):
         else:
             df = pd.DataFrame()
 
-        for j, slices in enumerate(self.slices_partition):
+        for j, slices in tqdm(enumerate(self.slices_partition)):
             print('Loop {} of {}'.format(str(j), str(len(self.slices_partition))))
             if j >= self.j_loop:
                 self.data_cache.cache_data(slices)
@@ -77,7 +78,7 @@ class EvaluationTraverser(ModelTraverser):
                                                                                  self.cnn_padding, self.max_batch_size)
                 outputs = list()
                 efficient_slices = list()
-                for overlap_slices, overlaps in zip(overlap_slices_partition, overlaps_partition):
+                for overlap_slices, overlaps in zip(tqdm(overlap_slices_partition, overlaps_partition)):
                     try:
                         o, e = cube_evaluation(hi_cube_tensor, self.model_input_dim, self.cnn_padding, position,
                                                overlap_slices, overlaps, self.model)

@@ -169,7 +169,6 @@ def extract_objects(cube: np.ndarray, mask: np.ndarray, Parameters: Dict):
     if Parameters["merge"]["positivity"]:
         mask[cube < 0.0] = 0
 
-    tic = time.perf_counter()
     objects, mask = linker.link_objects(cube.copy(), [], mask.copy(), Parameters["merge"]["radiusX"],
                                         Parameters["merge"]["radiusY"], Parameters["merge"]["radiusZ"],
                                         Parameters["merge"]["minSizeX"], Parameters["merge"]["minSizeY"],
@@ -178,8 +177,6 @@ def extract_objects(cube: np.ndarray, mask: np.ndarray, Parameters: Dict):
                                         Parameters["merge"]["minVoxels"], Parameters["merge"]["maxVoxels"],
                                         Parameters["merge"]["minFill"], Parameters["merge"]["maxFill"],
                                         Parameters["merge"]["minIntens"], Parameters["merge"]["maxIntens"])
-    toc = time.perf_counter()
-    print(f"Linking performed in {toc - tic:0.4f} seconds")
 
     if len(objects) == 0:
         return mask, mask, pd.DataFrame()

@@ -65,4 +65,5 @@ hyperparameters:
   threshold: 0.5
 
 traversing:
+  fits_file: null
   checkpoint: null
