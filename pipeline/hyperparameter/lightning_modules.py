@@ -104,10 +104,6 @@ class HyperoptSegmenter(pl.LightningModule):
         has_source, sources_found = tuple(
             map(lambda t: torch.tensor(t, device=self.device).view(-1), (has_source, sources_found)))
 
-        for metric, f in self.sofia_metrics.items():
-            f(sources_found, has_source)
-            self.log('sofia_{}'.format(metric), f, on_epoch=True)
-
         points = 0
 
         if has_source and sources_found:
@@ -124,6 +120,7 @@ class HyperoptSegmenter(pl.LightningModule):
 
                 points = np.mean([scores[k] for k in scores.keys()])
                 self.log('score_total', points, on_step=True, on_epoch=True)
+
             else:
                 points = 0
 
@@ -132,12 +129,23 @@ class HyperoptSegmenter(pl.LightningModule):
             if clipped_segmap[int(row.x_min):int(row.x_max), int(row.y_min):int(row.y_max),
                int(row.z_min):int(row.z_max)].sum() == 0:
                 for metric, f in self.sofia_metrics.items():
-                    f(torch.tensor(True), torch.tensor(False))
+                    f(torch.tensor(True).view(-1), torch.tensor(False).view(-1))
                     self.log('sofia_{}'.format(metric), f, on_epoch=True)
                 points -= 1
+            else:
+                for metric, f in self.sofia_metrics.items():
+                    f(torch.tensor(True).view(-1), torch.tensor(True).view(-1))
+                    self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
-        if not has_source and sources_found:
-            points = -len(parametrized_df)
+        if has_source and not sources_found:
+            for metric, f in self.sofia_metrics.items():
+                f(torch.tensor(False).view(-1), torch.tensor(True).view(-1))
+                self.log('sofia_{}'.format(metric), f, on_epoch=True)
+
+        if not has_source and not sources_found:
+            for metric, f in self.sofia_metrics.items():
+                f(torch.tensor(False).view(-1), torch.tensor(False).view(-1))
+                self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
         self.log('point', torch.tensor(points), on_step=True, on_epoch=True, reduce_fx=torch.sum,
                  tbptt_reduce_fx=torch.sum)

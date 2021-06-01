@@ -27,7 +27,7 @@ catParFormtBase = (
     "%12.3e", "%12.3e", "%10.3f", "%10.3f", "%10.3f", "%10.3f", "%7i", "%7i", "%7i", "%7i", "%5.3f")
 
 
-def estimate_axes(mask: np.ndarray):
+def estimate_axes(mask: np.ndarray, parameters: dict):
     mask_2d = np.clip(mask.sum(axis=0), 0., 1.)
     positions = np.argwhere(mask_2d > 0)
     if len(positions) < 3:
@@ -37,7 +37,7 @@ def estimate_axes(mask: np.ndarray):
 
         return pca.explained_variance_[0], pca.explained_variance_[1]
     except LinAlgError:
-        return 0, 0
+        return parameters["merge"]["minSizeX"], parameters["merge"]["minSizeY"]
 
 
 def estimate_angle(mask: np.ndarray):
@@ -133,7 +133,8 @@ def remove_cols(objects, catParNames, catParFormt, catParUnits):
     return [list(item) for item in list(objects)], tuple(catParNames), tuple(catParUnits), tuple(catParFormt)
 
 
-def estimate_object_properties(cube: np.array, mask: np.array, dilated_mask: np.ndarray, df):
+def estimate_object_properties(cube: np.array, mask: np.array, dilated_mask: np.ndarray, df: pd.DataFrame,
+                               parameters: dict):
     df['ell_maj'] = np.nan
     df['ell_min'] = np.nan
     df['ell_pa'] = np.nan
@@ -151,7 +152,7 @@ def estimate_object_properties(cube: np.array, mask: np.array, dilated_mask: np.
         if angle is not None:
             df.loc[i, 'ell_pa'] = angle
 
-        major, minor = estimate_axes(object_mask)
+        major, minor = estimate_axes(object_mask, parameters)
         if major is not None:
             df.loc[i, 'ell_maj'] = major
         if minor is not None:
@@ -165,18 +166,18 @@ def estimate_object_properties(cube: np.array, mask: np.array, dilated_mask: np.
     return df
 
 
-def extract_objects(cube: np.ndarray, mask: np.ndarray, Parameters: Dict):
-    if Parameters["merge"]["positivity"]:
+def extract_objects(cube: np.ndarray, mask: np.ndarray, parameters: Dict):
+    if parameters["merge"]["positivity"]:
         mask[cube < 0.0] = 0
 
-    objects, mask = linker.link_objects(cube.copy(), [], mask.copy(), Parameters["merge"]["radiusX"],
-                                        Parameters["merge"]["radiusY"], Parameters["merge"]["radiusZ"],
-                                        Parameters["merge"]["minSizeX"], Parameters["merge"]["minSizeY"],
-                                        Parameters["merge"]["minSizeZ"], Parameters["merge"]["maxSizeX"],
-                                        Parameters["merge"]["maxSizeY"], Parameters["merge"]["maxSizeZ"],
-                                        Parameters["merge"]["minVoxels"], Parameters["merge"]["maxVoxels"],
-                                        Parameters["merge"]["minFill"], Parameters["merge"]["maxFill"],
-                                        Parameters["merge"]["minIntens"], Parameters["merge"]["maxIntens"])
+    objects, mask = linker.link_objects(cube.copy(), [], mask.copy(), parameters["merge"]["radiusX"],
+                                        parameters["merge"]["radiusY"], parameters["merge"]["radiusZ"],
+                                        parameters["merge"]["minSizeX"], parameters["merge"]["minSizeY"],
+                                        parameters["merge"]["minSizeZ"], parameters["merge"]["maxSizeX"],
+                                        parameters["merge"]["maxSizeY"], parameters["merge"]["maxSizeZ"],
+                                        parameters["merge"]["minVoxels"], parameters["merge"]["maxVoxels"],
+                                        parameters["merge"]["minFill"], parameters["merge"]["maxFill"],
+                                        parameters["merge"]["minIntens"], parameters["merge"]["maxIntens"])
 
     if len(objects) == 0:
         return mask, mask, pd.DataFrame()
@@ -187,7 +188,7 @@ def extract_objects(cube: np.ndarray, mask: np.ndarray, Parameters: Dict):
     if len(objects) == 0:
         return mask, mask, pd.DataFrame()
 
-    dilated_mask, objects = parametrisation.dilate(cube.copy(), mask.copy(), objects, catParNames, Parameters)
+    dilated_mask, objects = parametrisation.dilate(cube.copy(), mask.copy(), objects, catParNames, parameters)
 
     if len(objects) == 0:
         return mask, mask, pd.DataFrame()
@@ -243,7 +244,7 @@ def parametrise_sources(header, input_cube, mask, position, parameters: Dict = N
 
     obj_mask, dilated_mask, df = extract_objects(input_cube, mask, parameters)
 
-    df = estimate_object_properties(input_cube, obj_mask, dilated_mask, df)
+    df = estimate_object_properties(input_cube, obj_mask, dilated_mask, df, parameters)
 
     df = compute_challenge_metrics(df, header, position, padding)
 
