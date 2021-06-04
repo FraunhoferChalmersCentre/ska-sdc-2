@@ -20,6 +20,8 @@ class ValidationItemGetter(ItemGettingStrategy):
             raise NotImplementedError('Not implemented tuple items')
         else:
             item_dict = dict()
+            if 'n_sources' in dataset.get_keys():
+                item_dict['n_sources'] = dataset.get_attribute('n_sources')[item]
             if item < dataset.get_attribute('index'):
                 item_dict['image'] = dataset.get_attribute('image')[item]
                 if 'segmentmap' in dataset.get_keys():

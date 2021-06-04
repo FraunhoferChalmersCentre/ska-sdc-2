@@ -7,14 +7,17 @@ from pytorch_toolbelt import losses
 from astropy.io import fits
 import numpy as np
 
-from definitions import config
+from definitions import config, ROOT_DIR
 from pipeline.segmentation.training import TrainSegmenter
 from pipeline.common import filename
-from pipeline.segmentation.utils import get_data, get_checkpoint_callback, get_random_vis_id, get_base_segmenter
+from pipeline.segmentation.utils import get_data, get_checkpoint_callback, get_random_vis_id, get_base_segmenter, \
+    get_equibatch_samplers
 
 training_set, validation_set = get_data(robust_validation=config['segmentation']['robust_validation'])
 base_segmenter = get_base_segmenter()
 checkpoint_callback = get_checkpoint_callback()
+
+train_sampler, val_sampler = get_equibatch_samplers(training_set, validation_set, epoch_merge=4)
 
 segmenter = TrainSegmenter(base_segmenter,
                            loss_fct=losses.DiceLoss(mode='binary'),
@@ -27,7 +30,9 @@ segmenter = TrainSegmenter(base_segmenter,
                            threshold=config['hyperparameters']['threshold'],
                            random_mirror=config['segmentation']['augmentation'],
                            random_rotation=config['segmentation']['augmentation'],
-                           robust_validation=config['segmentation']['robust_validation']
+                           robust_validation=config['segmentation']['robust_validation'],
+                           train_sampler=train_sampler,
+                           val_sampler=val_sampler
                            )
 
 logger = TensorBoardLogger("tb_logs",

@@ -48,11 +48,15 @@ class ValidationOutputSaveSegmenter(BaseSegmenter):
         model_out = connect_outputs(torch.squeeze(batch['image']), outputs, efficient_slices, padding)
         model_out = model_out
 
-        clipped_input = batch['image'][0, 0][[slice(p, - p) for p in padding]]
-        clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
-        segmap_sources = parametrise_sources(self.header, clipped_input.T, clipped_segmap.T, batch['position'],
-                                             self.sofia_parameters, padding)
-        return model_out.view(1, *model_out.shape), max(len(segmap_sources), 1)
+        if batch_idx < self.validation_set.get_attribute('index'):
+            clipped_input = batch['image'][0, 0][[slice(p, - p) for p in padding]]
+            clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
+            segmap_sources = parametrise_sources(self.header, clipped_input.T, clipped_segmap.T, batch['position'],
+                                                 self.sofia_parameters, padding)
+            n_segmap_sources = torch.tensor(max(len(segmap_sources), 1)).view(-1)
+        else:
+            n_segmap_sources = torch.tensor(0).view(-1)
+        return model_out.view(1, *model_out.shape), n_segmap_sources
 
     def validation_epoch_end(self, outputs) -> None:
         model_out = [p[0] for p in outputs]
@@ -121,21 +125,19 @@ class HyperoptSegmenter(pl.LightningModule):
                 points = np.mean([scores[k] for k in scores.keys()])
                 self.log('score_total', points, on_step=True, on_epoch=True)
 
-            else:
-                points = 0
-
-        clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
-        for i, row in parametrized_df.iterrows():
-            if clipped_segmap[int(row.x_min):int(row.x_max), int(row.y_min):int(row.y_max),
-               int(row.z_min):int(row.z_max)].sum() == 0:
-                for metric, f in self.sofia_metrics.items():
-                    f(torch.tensor(True).view(-1), torch.tensor(False).view(-1))
-                    self.log('sofia_{}'.format(metric), f, on_epoch=True)
-                points -= 1
-            else:
                 for metric, f in self.sofia_metrics.items():
                     f(torch.tensor(True).view(-1), torch.tensor(True).view(-1))
                     self.log('sofia_{}'.format(metric), f, on_epoch=True)
+
+            else:
+                for metric, f in self.sofia_metrics.items():
+                    f(torch.tensor(False).view(-1), torch.tensor(True).view(-1))
+                    self.log('sofia_{}'.format(metric), f, on_epoch=True)
+
+        clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
+        for i, row in parametrized_df.iterrows():
+            if clipped_segmap[int(row.x), int(row.y), int(row.z)] == 0:
+                points -= config['hyperparameters']['fp_penalty']
 
         if has_source and not sources_found:
             for metric, f in self.sofia_metrics.items():

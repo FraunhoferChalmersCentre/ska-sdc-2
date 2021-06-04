@@ -37,32 +37,40 @@ class SortedSampler(Sampler):
 
 
 class EquiBatchBootstrapSampler(Sampler):
-    def __init__(self, index, n_total, batch_size, bootstrap=False, intensities=None):
+    def __init__(self, index, n_total, batch_size, bootstrap=False, intensities=None, n_samples=None, random_seed=None):
         # half batch size
+        self.random_seed = random_seed
         self.bootstrap = bootstrap
         self.intensities = intensities
         self.hbs = int(batch_size / 2)
         self.sources = np.arange(index)
         self.empty = np.arange(index, n_total)
+        self.n_total = n_total
+        self.n_samples = n_samples
 
     def __len__(self):
-        return len(self.sources) + len(self.empty)
+        return self.n_total if not self.n_samples else self.n_samples
 
     def __iter__(self):
+        random_generator = np.random.RandomState(self.random_seed)
         if self.bootstrap:
             source_intensities = self.intensities[:len(self.sources)]
             source_intensities = source_intensities / source_intensities.sum()
-            source_samples = np.random.choice(self.sources, len(self.sources), replace=True, p=source_intensities)
+            n_source_samples = len(self.sources) if not self.n_samples else int(
+                self.n_samples * len(self.sources) / self.n_total)
+            source_samples = random_generator.choice(self.sources, n_source_samples, replace=True, p=source_intensities)
 
             empty_intensities = self.intensities[len(self.sources):]
             empty_intensities = empty_intensities / empty_intensities.sum()
-            empty_samples = np.random.choice(self.empty, len(self.empty), replace=True, p=empty_intensities)
+            n_empty_samples = len(self.empty) if not self.n_samples else int(
+                self.n_samples * len(self.empty) / self.n_total)
+            empty_samples = random_generator.choice(self.empty, n_empty_samples, replace=True, p=empty_intensities)
         else:
             source_samples = self.sources
             empty_samples = self.empty
 
-        source_samples = np.random.permutation(source_samples)
-        empty_samples = np.random.permutation(empty_samples)
+        source_samples = random_generator.permutation(source_samples)
+        empty_samples = random_generator.permutation(empty_samples)
 
         n_batches = int(np.ceil(len(source_samples) / self.hbs))
         batched_indices = []
@@ -71,7 +79,7 @@ class EquiBatchBootstrapSampler(Sampler):
             batch = []
             batch.extend(source_samples[i * self.hbs:(i + 1) * self.hbs])
             batch.extend(empty_samples[i * self.hbs:(i + 1) * self.hbs])
-            batched_indices.extend(np.random.permutation(batch))
+            batched_indices.extend(random_generator.permutation(batch))
 
         return iter(batched_indices)
 
@@ -91,8 +99,8 @@ class TrainSegmenter(BaseSegmenter):
                  threshold=None,
                  sofia_parameters=None,
                  dataset_surrogates=True,
-                 sampler=None,
-                 sofia_validation_interval=None,
+                 train_sampler=None,
+                 val_sampler=None,
                  train_padding=0,
                  random_rotation=True,
                  random_mirror=True,
@@ -152,8 +160,8 @@ class TrainSegmenter(BaseSegmenter):
             self.sofia_parameters = sofia_parameters
 
         self.dataset_surrogates = dataset_surrogates
-        self.sampler = sampler
-        self.sofia_validation_interval = sofia_validation_interval
+        self.train_sampler = train_sampler
+        self.val_sampler = val_sampler
         self.random_rotation = random_rotation
         self.random_flip = random_mirror
 
@@ -198,7 +206,7 @@ class TrainSegmenter(BaseSegmenter):
     def training_step(self, batch, batch_idx):
         # training_step defined the train loop.
         # It is independent of forward
-        x, y = batch['image'].clone(), batch['segmentmap'].clone()
+        x, y = batch['image'], batch['segmentmap']
 
         if self.random_rotation:
             for i in range(len(x)):
@@ -250,7 +258,7 @@ class TrainSegmenter(BaseSegmenter):
 
         y_hat = self(x, f_channels)
 
-        return y_hat, y
+        return y_hat.cpu(), y.cpu()
 
     def validation_step_robust(self, batch, batch_idx):
         # IMPORTANT: Single batch assumed when validating
@@ -378,8 +386,8 @@ class TrainSegmenter(BaseSegmenter):
         self.log_prediction_image()
 
     def train_dataloader(self):
-        if self.sampler is not None:
-            return DataLoader(self.training_set, batch_size=self.batch_size, sampler=self.sampler, shuffle=False)
+        if self.train_sampler is not None:
+            return DataLoader(self.training_set, batch_size=self.batch_size, sampler=self.train_sampler, shuffle=False)
         else:
             return DataLoader(self.training_set, batch_size=self.batch_size, shuffle=True)
 
@@ -388,7 +396,11 @@ class TrainSegmenter(BaseSegmenter):
             return DataLoader(self.validation_set, batch_size=1, shuffle=False,
                               sampler=SortedSampler(self.validation_set))
         else:
-            return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=False)
+            if self.val_sampler is not None:
+                return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=False,
+                                  sampler=self.val_sampler)
+            else:
+                return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=False)
 
     def configure_optimizers(self):
         return self.optimizer

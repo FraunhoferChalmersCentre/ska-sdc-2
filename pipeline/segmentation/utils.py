@@ -8,6 +8,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import numpy as np
 
 from pipeline.segmentation.base import BaseSegmenter
+from pipeline.segmentation.training import EquiBatchBootstrapSampler
 from pipeline.traversing.traverser import CubeCache
 from pipeline.common import filename
 from pipeline.common import filehandling
@@ -58,7 +59,7 @@ def get_checkpoint_callback():
                                           filename=config['segmentation']['model_name'] + '-' + str(
                                               model_id) + '-{epoch:02d}-{val_loss:.2f}',
                                           mode='min',
-                                          period=10 if config['segmentation']['robust_validation'] else 1)
+                                          period=10 if config['segmentation']['robust_validation'] else None)
     return checkpoint_callback
 
 
@@ -106,3 +107,19 @@ def get_base_segmenter():
     scale, mean, std = get_statistics()
     model = get_model()
     return BaseSegmenter(model, scale, mean, std)
+
+
+def get_equibatch_samplers(training_set, validation_set, epoch_merge=1):
+    intensities = np.array([np.prod(a.shape) for a in training_set.get_attribute('image')])
+    train_sampler = EquiBatchBootstrapSampler(training_set.get_attribute('index'), len(training_set),
+                                              config['segmentation']['batch_size'], bootstrap=True,
+                                              intensities=intensities,
+                                              n_samples=epoch_merge * len(training_set))
+
+    val_intensities = np.array([np.prod(a.shape) for a in validation_set.get_attribute('image')])
+    val_sampler = EquiBatchBootstrapSampler(validation_set.get_attribute('index'), len(validation_set),
+                                            config['segmentation']['batch_size'], bootstrap=True,
+                                            intensities=val_intensities, n_samples=epoch_merge * len(validation_set),
+                                            random_seed=100)
+
+    return train_sampler, val_sampler

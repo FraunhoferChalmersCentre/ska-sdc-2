@@ -63,8 +63,9 @@ characteristic_parameters:
 
 hyperparameters:
   threshold: 0.5
+  fp_penalty: 1
 
 traversing:
   fits_file: null
-  checkpoint: null
+  checkpoint: resnet18-15-epoch=109-val_loss=0.67.ckpt
   gpu_memory_max: 7000
