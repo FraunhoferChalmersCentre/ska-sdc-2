@@ -38,9 +38,10 @@ class SortedSampler(Sampler):
 
 class EquiBatchBootstrapSampler(Sampler):
     def __init__(self, index, n_total, source_batch_size, noise_batch_size, source_bs_start=None, intensities=None,
-                 n_samples=None, random_seed=None, anneal_coeff=3, batch_size_noise=.15):
+                 n_samples=None, random_seed=None, anneal_interval=2, batch_size_noise=.15):
 
-        self.anneal_coeff = anneal_coeff
+        self.epochs = 0
+        self.anneal_interval = anneal_interval
         self.random_seed = random_seed
         self.intensities = intensities
         self.source_bs_end = source_batch_size
@@ -64,9 +65,9 @@ class EquiBatchBootstrapSampler(Sampler):
         return self.n_total if not self.n_samples else self.n_samples
 
     def update_batch_size(self):
-        if self.current_source_bs != self.source_bs_end:
-            self.current_source_bs -= self.anneal_coeff
-            self.current_noise_bs += self.anneal_coeff
+        if self.current_source_bs != self.source_bs_end and self.epochs % self.anneal_interval == 0:
+            self.current_source_bs -= 1
+            self.current_noise_bs += 1
 
     def get_batch_sizes(self, random_generator):
         if self.max_batch_size_noise > 0:
@@ -109,6 +110,7 @@ class EquiBatchBootstrapSampler(Sampler):
             batch.extend(empty_samples[i * noise_bs:(i + 1) * noise_bs])
             batched_indices.extend(random_generator.permutation(batch))
 
+        self.epochs += 1
         self.update_batch_size()
 
         return iter(batched_indices)

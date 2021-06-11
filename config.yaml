@@ -11,7 +11,7 @@ data:
 
 segmentation:
   size: dev_s
-  limit_files: null
+  limit_files: 5
   model_name: resnet34
   filtering:
     training: null
@@ -32,6 +32,7 @@ segmentation:
     training_end: 0.05
     validation: 0.05
   robust_validation: False
+  anneal_interval: 3
 
 downstream:
   sofia:

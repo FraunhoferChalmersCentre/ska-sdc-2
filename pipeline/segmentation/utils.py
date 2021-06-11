@@ -121,7 +121,8 @@ def get_equibatch_samplers(training_set, validation_set, epoch_merge=1):
     train_sampler = EquiBatchBootstrapSampler(training_set.get_attribute('index'), len(training_set),
                                               train_source_bs, train_noise_bs, source_bs_start=train_source_bs_start,
                                               intensities=intensities,
-                                              n_samples=epoch_merge * len(training_set))
+                                              n_samples=epoch_merge * len(training_set),
+                                              anneal_interval=config['segmentation']['anneal_interval'])
 
     val_source_bs = int(config['segmentation']['batch_size'] * config['segmentation']['source_fraction']['validation'])
     val_noise_bs = config['segmentation']['batch_size'] - train_source_bs
