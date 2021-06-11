@@ -12,7 +12,7 @@ data:
 segmentation:
   size: dev_s
   limit_files: null
-  model_name: resnet18
+  model_name: resnet34
   filtering:
     training: null
     validation: null
@@ -25,8 +25,12 @@ segmentation:
     spatial: 32
     freq: 32
   save_plots: False
-  augmentation: True
+  augmentation: False
   batch_size: 128
+  source_fraction:
+    training_start: 1
+    training_end: 0.05
+    validation: 0.05
   robust_validation: False
 
 downstream:
@@ -67,5 +71,5 @@ hyperparameters:
 
 traversing:
   fits_file: null
-  checkpoint: resnet18-15-epoch=109-val_loss=0.67.ckpt
+  checkpoint: resnet34-0-epoch=1107-val_loss=0.54.ckpt
   gpu_memory_max: 7000

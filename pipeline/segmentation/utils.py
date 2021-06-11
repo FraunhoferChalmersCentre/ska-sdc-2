@@ -69,7 +69,7 @@ def get_state_dict(file):
     return state_dict
 
 
-def get_random_vis_id(dataset, min_allocated=100, random_state=np.random.RandomState()):
+def get_random_vis_id(dataset, min_allocated=300, random_state=np.random.RandomState()):
     vis_id = None
     shape = get_hi_shape(filename.data.sky(config['segmentation']['size']))
 
@@ -111,15 +111,24 @@ def get_base_segmenter():
 
 def get_equibatch_samplers(training_set, validation_set, epoch_merge=1):
     intensities = np.array([np.prod(a.shape) for a in training_set.get_attribute('image')])
+    train_source_bs_end = int(
+        config['segmentation']['batch_size'] * config['segmentation']['source_fraction']['training_end'])
+    train_source_bs = int(
+        config['segmentation']['batch_size'] * config['segmentation']['source_fraction']['training_end'])
+    train_noise_bs = config['segmentation']['batch_size'] - train_source_bs_end
+    train_source_bs_start = int(
+        config['segmentation']['batch_size'] * config['segmentation']['source_fraction']['training_start'])
     train_sampler = EquiBatchBootstrapSampler(training_set.get_attribute('index'), len(training_set),
-                                              config['segmentation']['batch_size'], bootstrap=True,
+                                              train_source_bs, train_noise_bs, source_bs_start=train_source_bs_start,
                                               intensities=intensities,
                                               n_samples=epoch_merge * len(training_set))
 
+    val_source_bs = int(config['segmentation']['batch_size'] * config['segmentation']['source_fraction']['validation'])
+    val_noise_bs = config['segmentation']['batch_size'] - train_source_bs
     val_intensities = np.array([np.prod(a.shape) for a in validation_set.get_attribute('image')])
     val_sampler = EquiBatchBootstrapSampler(validation_set.get_attribute('index'), len(validation_set),
-                                            config['segmentation']['batch_size'], bootstrap=True,
+                                            val_source_bs, val_noise_bs, source_bs_start=None,
                                             intensities=val_intensities, n_samples=epoch_merge * len(validation_set),
-                                            random_seed=100)
+                                            random_seed=100, batch_size_noise=0)
 
     return train_sampler, val_sampler

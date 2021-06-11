@@ -53,12 +53,17 @@ def split(dataset: Dict, left_fraction: float, required_attrs: List[str], random
     n_units = len(dataset[required_attrs[0]])
 
     all_units = np.arange(n_units)
-    empty_units = all_units[all_units >= dataset['index']]
+    noise_units = all_units[all_units >= dataset['index']]
     source_units = all_units[all_units < dataset['index']]
 
+    noise_positions = [p[0, 0] for p in dataset['position'][dataset['index']:]]
+    noise_split = np.percentile(noise_positions, int(left_fraction * 100))
+    source_positions = [p[0, 0] for p in dataset['position'][:dataset['index']]]
+    source_split = np.percentile(source_positions, int(left_fraction * 100))
+
     left_units = np.concatenate(
-        [random_state.choice(units, size=int(left_fraction * len(units)), replace=False).astype(np.int32) for
-         units in [empty_units, source_units]])
+        ([noise_units[i] for i in range(len(noise_units)) if noise_positions[i] < noise_split],
+         [source_units[i] for i in range(len(source_units)) if source_positions[i] < source_split]))
 
     right_units = np.setdiff1d(all_units, left_units).astype(np.int32)
 

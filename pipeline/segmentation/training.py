@@ -37,12 +37,24 @@ class SortedSampler(Sampler):
 
 
 class EquiBatchBootstrapSampler(Sampler):
-    def __init__(self, index, n_total, batch_size, bootstrap=False, intensities=None, n_samples=None, random_seed=None):
-        # half batch size
+    def __init__(self, index, n_total, source_batch_size, noise_batch_size, source_bs_start=None, intensities=None,
+                 n_samples=None, random_seed=None, anneal_coeff=3, batch_size_noise=.15):
+
+        self.anneal_coeff = anneal_coeff
         self.random_seed = random_seed
-        self.bootstrap = bootstrap
         self.intensities = intensities
-        self.hbs = int(batch_size / 2)
+        self.source_bs_end = source_batch_size
+        self.noise_bs_end = noise_batch_size
+        self.batch_size = source_batch_size + noise_batch_size
+        self.max_batch_size_noise = np.round(batch_size_noise * self.batch_size)
+
+        if source_bs_start:
+            self.current_source_bs = source_bs_start
+            self.current_noise_bs = (self.source_bs_end + self.noise_bs_end) - self.current_source_bs
+        else:
+            self.current_source_bs = self.source_bs_end
+            self.current_noise_bs = self.noise_bs_end
+
         self.sources = np.arange(index)
         self.empty = np.arange(index, n_total)
         self.n_total = n_total
@@ -51,35 +63,53 @@ class EquiBatchBootstrapSampler(Sampler):
     def __len__(self):
         return self.n_total if not self.n_samples else self.n_samples
 
+    def update_batch_size(self):
+        if self.current_source_bs != self.source_bs_end:
+            self.current_source_bs -= self.anneal_coeff
+            self.current_noise_bs += self.anneal_coeff
+
+    def get_batch_sizes(self, random_generator):
+        if self.max_batch_size_noise > 0:
+            min_noise = int(min(np.round(self.max_batch_size_noise / 2), self.current_source_bs,
+                            self.batch_size - self.current_noise_bs))
+            max_noise = int(min(np.round(self.max_batch_size_noise / 2), self.batch_size - self.current_source_bs,
+                            self.current_noise_bs))
+            noise = random_generator.randint(-min_noise, max_noise + 1)
+            print(self.current_source_bs, self.current_noise_bs, min_noise, max_noise, noise)
+            return self.current_source_bs + noise, self.current_noise_bs - noise
+        else:
+            return self.current_source_bs, self.current_noise_bs
+
     def __iter__(self):
         random_generator = np.random.RandomState(self.random_seed)
-        if self.bootstrap:
-            source_intensities = self.intensities[:len(self.sources)]
-            source_intensities = source_intensities / source_intensities.sum()
-            n_source_samples = len(self.sources) if not self.n_samples else int(
-                self.n_samples * len(self.sources) / self.n_total)
-            source_samples = random_generator.choice(self.sources, n_source_samples, replace=True, p=source_intensities)
 
-            empty_intensities = self.intensities[len(self.sources):]
-            empty_intensities = empty_intensities / empty_intensities.sum()
-            n_empty_samples = len(self.empty) if not self.n_samples else int(
-                self.n_samples * len(self.empty) / self.n_total)
-            empty_samples = random_generator.choice(self.empty, n_empty_samples, replace=True, p=empty_intensities)
-        else:
-            source_samples = self.sources
-            empty_samples = self.empty
+        source_bs, noise_bs = self.get_batch_sizes(random_generator)
+
+        source_intensities = self.intensities[:len(self.sources)]
+        source_intensities = source_intensities / source_intensities.sum()
+        n_source_samples = len(self.sources) if not self.n_samples else int(
+            self.n_samples * (source_bs / self.batch_size))
+        source_samples = random_generator.choice(self.sources, n_source_samples, replace=True, p=source_intensities)
+
+        empty_intensities = self.intensities[len(self.sources):]
+        empty_intensities = empty_intensities / empty_intensities.sum()
+        n_empty_samples = len(self.empty) if not self.n_samples else int(
+            self.n_samples * (noise_bs / self.batch_size))
+        empty_samples = random_generator.choice(self.empty, n_empty_samples, replace=True, p=empty_intensities)
 
         source_samples = random_generator.permutation(source_samples)
         empty_samples = random_generator.permutation(empty_samples)
 
-        n_batches = int(np.ceil(len(source_samples) / self.hbs))
+        n_batches = int(np.ceil(len(source_samples) / source_bs))
         batched_indices = []
 
         for i in range(n_batches):
             batch = []
-            batch.extend(source_samples[i * self.hbs:(i + 1) * self.hbs])
-            batch.extend(empty_samples[i * self.hbs:(i + 1) * self.hbs])
+            batch.extend(source_samples[i * source_bs:(i + 1) * source_bs])
+            batch.extend(empty_samples[i * noise_bs:(i + 1) * noise_bs])
             batched_indices.extend(random_generator.permutation(batch))
+
+        self.update_batch_size()
 
         return iter(batched_indices)
 
@@ -207,6 +237,8 @@ class TrainSegmenter(BaseSegmenter):
         # training_step defined the train loop.
         # It is independent of forward
         x, y = batch['image'], batch['segmentmap']
+
+        self.log('galaxy_fraction', torch.sum(y) / torch.prod(torch.tensor(y.shape)), on_epoch=True, on_step=False)
 
         if self.random_rotation:
             for i in range(len(x)):

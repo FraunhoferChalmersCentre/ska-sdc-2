@@ -56,7 +56,7 @@ class ValidationOutputSaveSegmenter(BaseSegmenter):
             n_segmap_sources = torch.tensor(max(len(segmap_sources), 1)).view(-1)
         else:
             n_segmap_sources = torch.tensor(0).view(-1)
-        return model_out.view(1, *model_out.shape), n_segmap_sources
+        return model_out.view(1, *model_out.shape).cpu(), n_segmap_sources
 
     def validation_epoch_end(self, outputs) -> None:
         model_out = [p[0] for p in outputs]
@@ -135,9 +135,10 @@ class HyperoptSegmenter(pl.LightningModule):
                     self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
         clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
+        penalty = 0
         for i, row in parametrized_df.iterrows():
             if clipped_segmap[int(row.x), int(row.y), int(row.z)] == 0:
-                points -= config['hyperparameters']['fp_penalty']
+                penalty -= config['hyperparameters']['fp_penalty']
 
         if has_source and not sources_found:
             for metric, f in self.sofia_metrics.items():
@@ -150,6 +151,10 @@ class HyperoptSegmenter(pl.LightningModule):
                 self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
         self.log('point', torch.tensor(points), on_step=True, on_epoch=True, reduce_fx=torch.sum,
+                 tbptt_reduce_fx=torch.sum)
+        self.log('penalty', torch.tensor(penalty), on_step=True, on_epoch=True, reduce_fx=torch.sum,
+                 tbptt_reduce_fx=torch.sum)
+        self.log('adjusted_point', torch.tensor(points + penalty), on_step=True, on_epoch=True, reduce_fx=torch.sum,
                  tbptt_reduce_fx=torch.sum)
 
     def val_dataloader(self):
