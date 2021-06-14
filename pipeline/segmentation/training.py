@@ -72,9 +72,9 @@ class EquiBatchBootstrapSampler(Sampler):
     def get_batch_sizes(self, random_generator):
         if self.max_batch_size_noise > 0:
             min_noise = int(min(np.round(self.max_batch_size_noise / 2), self.current_source_bs,
-                            self.batch_size - self.current_noise_bs))
+                                self.batch_size - self.current_noise_bs))
             max_noise = int(min(np.round(self.max_batch_size_noise / 2), self.batch_size - self.current_source_bs,
-                            self.current_noise_bs))
+                                self.current_noise_bs))
             noise = random_generator.randint(-min_noise, max_noise + 1)
             print(self.current_source_bs, self.current_noise_bs, min_noise, max_noise, noise)
             return self.current_source_bs + noise, self.current_noise_bs - noise
@@ -101,7 +101,7 @@ class EquiBatchBootstrapSampler(Sampler):
         source_samples = random_generator.permutation(source_samples)
         empty_samples = random_generator.permutation(empty_samples)
 
-        n_batches = int(np.ceil(len(source_samples) / source_bs))
+        n_batches = int(np.ceil(len(source_samples) + len(empty_samples) / (source_bs + noise_bs)))
         batched_indices = []
 
         for i in range(n_batches):

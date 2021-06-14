@@ -28,11 +28,11 @@ segmentation:
   augmentation: False
   batch_size: 128
   source_fraction:
-    training_start: 1
+    training_start: .2
     training_end: 0.05
     validation: 0.05
   robust_validation: False
-  anneal_interval: 3
+  anneal_interval: 10
 
 downstream:
   sofia:
