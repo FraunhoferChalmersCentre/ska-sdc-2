@@ -26,7 +26,7 @@ segmenter.to(device)
 torch.cuda.empty_cache()
 
 # EvaluationTraverser
-model_input_dim = np.array([128, 128, 128 + 64])
+model_input_dim = np.array([128, 128, 128])
 cnn_padding = np.array([8, 8, 8])
 desired_dim = 4 * (model_input_dim - 2 * cnn_padding)
 

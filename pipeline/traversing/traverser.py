@@ -1,4 +1,10 @@
 from abc import ABC, abstractmethod
+import os
+
+from astropy.io.fits import getheader
+
+from pipeline.common import filename
+from pipeline.data.segmentmap import create_from_df, prepare_df
 from pipeline.segmentation.base import BaseSegmenter
 from torch import nn
 from pipeline.downstream import parametrise_sources
@@ -10,6 +16,8 @@ import numpy as np
 import pickle
 import torch
 from tqdm import tqdm
+from spectral_cube import SpectralCube
+from astropy.wcs import WCS
 
 
 class ModelTraverser(ABC):
@@ -62,7 +70,7 @@ class EvaluationTraverser(ModelTraverser):
     def __len__(self):
         return len(self.slices_partition)
 
-    def traverse(self) -> pd.DataFrame:
+    def traverse(self, for_validation=False) -> pd.DataFrame:
         if self.j_loop > 0:
             df = pd.read_csv(self.df_name)
         else:
@@ -91,11 +99,50 @@ class EvaluationTraverser(ModelTraverser):
                     outputs += o
                     efficient_slices += e
                 mask = connect_outputs(hi_cube_tensor, outputs, efficient_slices, self.cnn_padding)
-                mask = torch.round(nn.Sigmoid()(mask) + 0.5 - config['hyperparameters']['threshold'])
-                mask[mask > 1] = 1
 
                 inner_slices = [slice(p, -p) for p in self.cnn_padding]
                 hi_cube_tensor = hi_cube_tensor[inner_slices]
+
+                if for_validation:
+                    inner_slices.reverse()
+                    wcs = WCS(self.header)[inner_slices]
+                    cube_name = filename.processed.hyperopt_dataset(config['segmentation']['size'],
+                                                                    config['segmentation']['model_name']) + '/cube.fits'
+                    if os.path.isfile(cube_name):
+                        os.remove(cube_name)
+
+                    cube_in = SpectralCube(hi_cube_tensor.T.cpu().numpy(), wcs, header=self.header)
+                    cube_in.write(cube_name)
+
+                    out_name = filename.processed.hyperopt_dataset(config['segmentation']['size'],
+                                                                   config['segmentation'][
+                                                                       'model_name']) + '/modelout.fits'
+                    if os.path.isfile(out_name):
+                        os.remove(out_name)
+
+                    model_out = SpectralCube(mask.T.cpu().numpy(), wcs, header=self.header)
+                    model_out.write(out_name)
+
+                    df = pd.read_csv(filename.data.true(config['segmentation']['size']), sep=' ')
+                    df = prepare_df(df, self.header)
+                    for i, p in enumerate(['x', 'y', 'z']):
+                        df = df[(df[p] < self.header['NAXIS{}'.format(i + 1)]) & (df[p] > 0)]
+                    # full_header = getheader(filename.data.sky(config['segmentation']['size']))
+
+                    segmap, _ = create_from_df(df, self.header, fill_value=None)
+                    segmap = segmap.todense().T[inner_slices]
+                    segmap_name = filename.processed.hyperopt_dataset(config['segmentation']['size'],
+                                                                      config['segmentation'][
+                                                                          'model_name']) + '/segmap.npz'
+                    if os.path.isfile(segmap_name):
+                        os.remove(segmap_name)
+
+                    np.savez(segmap_name, segmap)
+
+                    return pd.DataFrame()
+
+                mask = torch.round(nn.Sigmoid()(mask) + 0.5 - config['hyperparameters']['threshold'])
+                mask[mask > 1] = 1
 
                 # Convert to numpy for Sofia
                 partition_position = torch.tensor([[s.start + p for s, p in zip(slices, self.cnn_padding)],

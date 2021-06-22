@@ -1,10 +1,14 @@
 import glob
 
+import numpy as np
 import torch
-from astropy.io.fits import getheader
+from astropy.io.fits import getheader, getdata
 from hyperopt import hp, fmin, tpe
+import pandas as pd
+from sofia import readoptions
+from sparse import load_npz
 
-from definitions import config
+from definitions import config, ROOT_DIR
 from pipeline.data.ska_dataset import SKADataSet, ValidationItemGetter
 from pipeline.common import filename
 from pipeline.hyperparameter.lightning_modules import HyperoptSegmenter
@@ -14,14 +18,18 @@ size = config['segmentation']['size']
 modelname = config['segmentation']['model_name']
 
 directory = filename.processed.hyperopt_dataset(size, modelname)
-file = glob.glob(directory + '/*.pt')[0]
-dataset = torch.load(file)
-validation_set = SKADataSet(dataset, ValidationItemGetter(), empty_keys=['position', 'model_out'])
 
-segmenter = HyperoptSegmenter(validation_set, getheader(filename.data.sky(config['segmentation']['size'])))
-segmenter.eval()
+df = pd.read_csv(filename.data.true(size), sep=' ')
+header = getheader(directory + '/cube.fits')
+cube_in = getdata(directory + '/cube.fits')
+model_out = getdata(directory + '/modelout.fits')
+segmap = np.load(directory + '/segmap.npz')['arr_0']
 
-tuner = Tuner(segmenter)
+sofia_params = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])
+
+tuner = Tuner(.5, sofia_params, cube_in, header, model_out, segmap, df)
+
+del cube_in, model_out
 
 space = {'radius_spatial': hp.uniform('radius_spatial', .5, 10),
          'radius_freq': hp.uniform('radius_freq', .5, 50),

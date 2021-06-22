@@ -37,7 +37,7 @@ def prepare_df(df: pd.DataFrame, header: Header):
     return df
 
 
-def dense_cube(row: pd.Series, spans: Tuple):
+def dense_cube(row: pd.Series, spans: Tuple, fill_value=1.):
     cube_shape = tuple(map(lambda s: int(s[1] - s[0]), spans))
     cross_section = np.zeros(cube_shape[:2], dtype=np.float32)
 
@@ -50,7 +50,7 @@ def dense_cube(row: pd.Series, spans: Tuple):
     rows, cols = draw.ellipse(*center, *axes, shape=cube_shape[:2])
     if len(rows) == 0:
         return None
-    cross_section[rows, cols] = 1.
+    cross_section[rows, cols] = fill_value
 
     # Get span of rows in cross-section containing the ellipse
     minimum_start, maximum_end = rows.min(), rows.max() + 1
@@ -133,24 +133,23 @@ def gaussian_convolution(small_dense_cube: np.ndarray, header: Header):
     return small_dense_cube
 
 
-def create_from_df(df: pd.DataFrame, header: Header):
+def create_from_df(df: pd.DataFrame, header: Header, fill_value=1.):
     full_cube_shape = (header['NAXIS1'], header['NAXIS2'], header['NAXIS3'])
     cube = DOK(full_cube_shape, dtype=np.float32)
 
     allocation_dict = dict()
 
-    minv = np.float('inf')
-
     for i, row in df.iterrows():
         half_lengths = (row.major_radius_pixels, row.major_radius_pixels, row.n_channels / 2)
         spans = get_spans(full_cube_shape, row[['x', 'y', 'z']], half_lengths)
 
-        small_dense_cube = dense_cube(row, spans)
+        fill_value_this = fill_value if fill_value is not None else i
+        small_dense_cube = dense_cube(row, spans, fill_value_this)
 
         if small_dense_cube is None or small_dense_cube.sum() == 0:
             continue
 
-        cube_allocations = np.argwhere(small_dense_cube == 1).astype(np.int32)
+        cube_allocations = np.argwhere(small_dense_cube == fill_value_this).astype(np.int32)
 
         min_pos = np.fromiter(map(lambda s: s[0], spans), dtype=np.int32)
 
