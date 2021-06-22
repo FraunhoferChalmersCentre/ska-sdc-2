@@ -6,7 +6,7 @@ from astropy.io.fits import getheader, getdata
 from hyperopt import hp, fmin, tpe
 import pandas as pd
 from sofia import readoptions
-from sparse import load_npz
+from sparse import load_npz, COO
 
 from definitions import config, ROOT_DIR
 from pipeline.data.ska_dataset import SKADataSet, ValidationItemGetter
@@ -21,9 +21,9 @@ directory = filename.processed.hyperopt_dataset(size, modelname)
 
 df = pd.read_csv(filename.data.true(size), sep=' ')
 header = getheader(directory + '/cube.fits')
-cube_in = getdata(directory + '/cube.fits')
-model_out = getdata(directory + '/modelout.fits')
-segmap = np.load(directory + '/segmap.npz')['arr_0']
+cube_in = getdata(directory + '/cube.fits').astype(np.float32)
+model_out = getdata(directory + '/modelout.fits').astype(np.float32)
+segmap = COO.from_numpy(np.load(directory + '/segmap.npz')['arr_0'].astype(np.float32))
 
 sofia_params = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])
 

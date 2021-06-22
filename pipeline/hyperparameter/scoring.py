@@ -61,8 +61,8 @@ def score_source(header, batch, parametrized_df, writer):
 
 
 def score_df(input_cube: torch.tensor, header: Header, model_out: torch.tensor, df_true: pd.DataFrame,
-             segmentmap: np.ndarray, sofia_params: Dict, mask_threshold: float, writer: SummaryWriter):
-    mask = torch.round(nn.Sigmoid()(model_out) + 0.5 - mask_threshold)
+             segmentmap: COO, sofia_params: Dict, mask_threshold: float, writer: SummaryWriter):
+    mask = torch.round(nn.Sigmoid()(model_out.to(torch.float32)) + 0.5 - mask_threshold).to(torch.float32)
     mask[mask > 1] = 1
 
     position = torch.zeros(2, 3)

@@ -14,7 +14,7 @@ iteration = 0
 
 class Tuner:
     def __init__(self, threshold: float, sofia_parameters: dict, input_cube: np.ndarray, header: Header,
-                 model_out: np.ndarray, segmap: np.ndarray, df):
+                 model_out: np.ndarray, segmap: COO, df):
 
         self.header = header
         self.df = df
