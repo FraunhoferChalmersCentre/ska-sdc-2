@@ -110,7 +110,7 @@ def get_base_segmenter():
 
 
 def get_equibatch_samplers(training_set, validation_set, epoch_merge=1):
-    intensities = np.array([np.prod(a.shape) for a in training_set.get_attribute('image')])
+    intensities = np.ones(len(training_set))
     train_source_bs_end = int(
         config['segmentation']['batch_size'] * config['segmentation']['source_fraction']['training_end'])
     train_source_bs = int(

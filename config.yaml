@@ -11,7 +11,7 @@ data:
 
 segmentation:
   size: dev_s
-  limit_files: 5
+  limit_files: null
   model_name: resnet34
   filtering:
     training: null
@@ -28,9 +28,9 @@ segmentation:
   augmentation: False
   batch_size: 128
   source_fraction:
-    training_start: .2
-    training_end: 0.05
-    validation: 0.05
+    training_start: 0.5
+    training_end: 0.5
+    validation: 0.1
   robust_validation: False
   anneal_interval: 10
 
