@@ -340,7 +340,6 @@ class TrainSegmenter(BaseSegmenter):
             self.log('score_n_matches', n_matched, on_step=True, on_epoch=True)
 
             if n_matched > 0:
-                source_found = torch.tensor(True, device=self.device).view(-1)
                 self.log('n_found', torch.ones(1), on_step=False, on_epoch=True, reduce_fx=torch.sum,
                          tbptt_reduce_fx=torch.sum)
 
@@ -349,16 +348,34 @@ class TrainSegmenter(BaseSegmenter):
 
                 points = np.mean([scores[k] for k in scores.keys()])
                 self.log('score_total', points, on_step=True, on_epoch=True)
+
+                for metric, f in self.sofia_metrics.items():
+                    f(torch.tensor(True).view(-1), torch.tensor(True).view(-1))
+                    self.log('sofia_{}'.format(metric), f, on_epoch=True)
+
             else:
-                points = 0
+                for metric, f in self.sofia_metrics.items():
+                    f(torch.tensor(False).view(-1), torch.tensor(True).view(-1))
+                    self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
-            points -= (len(parametrized_df) - n_matched)
+        clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
+        penalty = 0
+        for i, row in parametrized_df.iterrows():
+            try:
+                if clipped_segmap[int(row.x), int(row.y), int(row.z)] == 0:
+                    penalty -= config['hyperparameters']['fp_penalty']
+            except Exception:
+                penalty -= config['hyperparameters']['fp_penalty']
 
-        if not has_source and any_sources_found:
-            points = -len(parametrized_df)
-            source_found = torch.tensor(True, device=self.device).view(-1)
+        for metric, f in self.sofia_metrics.items():
+            f(torch.tensor(any_sources_found).view(-1), torch.tensor(has_source).view(-1))
+            self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
         self.log('point', torch.tensor(points), on_step=True, on_epoch=True, reduce_fx=torch.sum,
+                 tbptt_reduce_fx=torch.sum)
+        self.log('penalty', torch.tensor(penalty), on_step=True, on_epoch=True, reduce_fx=torch.sum,
+                 tbptt_reduce_fx=torch.sum)
+        self.log('adjusted_point', torch.tensor(points + penalty), on_step=True, on_epoch=True, reduce_fx=torch.sum,
                  tbptt_reduce_fx=torch.sum)
 
         for metric, f in self.sofia_metrics.items():
@@ -379,8 +396,8 @@ class TrainSegmenter(BaseSegmenter):
             return
 
         if self.dataset_surrogates:
-            model_outs = torch.cat(tuple([p[0].view(-1) for p in validation_step_outputs])).view(1, 1, -1)
-            segmaps = torch.cat(tuple([p[1].view(-1) for p in validation_step_outputs])).view(1, 1, -1)
+            model_outs = torch.cat(tuple([p[0].reshape(-1) for p in validation_step_outputs])).reshape(1, 1, -1)
+            segmaps = torch.cat(tuple([p[1].reshape(-1) for p in validation_step_outputs])).reshape(1, 1, -1)
             for surrogate, f in self.surrogates.items():
                 self.log(surrogate, f(model_outs, segmaps), on_epoch=True)
 

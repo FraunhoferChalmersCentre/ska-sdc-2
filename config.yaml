@@ -30,8 +30,8 @@ segmentation:
   source_fraction:
     training_start: 0.5
     training_end: 0.5
-    validation: 0.1
-  robust_validation: False
+    validation: 0.5
+  robust_validation: True
   anneal_interval: 10
 
 downstream:

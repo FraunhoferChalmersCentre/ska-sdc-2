@@ -53,13 +53,22 @@ def get_model():
 
 def get_checkpoint_callback():
     model_id = filename.models.new_id()
-    checkpoint_callback = ModelCheckpoint(monitor='val_loss',
-                                          save_top_k=1,
-                                          dirpath=filename.models.directory,
-                                          filename=config['segmentation']['model_name'] + '-' + str(
-                                              model_id) + '-{epoch:02d}-{val_loss:.2f}',
-                                          mode='min',
-                                          period=10 if config['segmentation']['robust_validation'] else None)
+    if config['segmentation']['robust_validation']:
+        checkpoint_callback = ModelCheckpoint(monitor='point_epoch',
+                                              save_top_k=20,
+                                              dirpath=filename.models.directory,
+                                              filename=config['segmentation']['model_name'] + '-' + str(
+                                                  model_id) + '-{epoch:02d}-{adjusted_point_epoch:.2f}',
+                                              mode='max',
+                                              period=10)
+    else:
+        checkpoint_callback = ModelCheckpoint(monitor='val_loss',
+                                              save_top_k=20,
+                                              dirpath=filename.models.directory,
+                                              filename=config['segmentation']['model_name'] + '-' + str(
+                                                  model_id) + '-{epoch:02d}-{val_loss:.2f}',
+                                              mode='min',
+                                              period=None)
     return checkpoint_callback
 
 
