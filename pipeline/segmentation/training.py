@@ -340,6 +340,7 @@ class TrainSegmenter(BaseSegmenter):
             self.log('score_n_matches', n_matched, on_step=True, on_epoch=True)
 
             if n_matched > 0:
+                source_found = torch.tensor(True, device=self.device).view(-1)
                 self.log('n_found', torch.ones(1), on_step=False, on_epoch=True, reduce_fx=torch.sum,
                          tbptt_reduce_fx=torch.sum)
 
@@ -349,27 +350,15 @@ class TrainSegmenter(BaseSegmenter):
                 points = np.mean([scores[k] for k in scores.keys()])
                 self.log('score_total', points, on_step=True, on_epoch=True)
 
-                for metric, f in self.sofia_metrics.items():
-                    f(torch.tensor(True).view(-1), torch.tensor(True).view(-1))
-                    self.log('sofia_{}'.format(metric), f, on_epoch=True)
-
-            else:
-                for metric, f in self.sofia_metrics.items():
-                    f(torch.tensor(False).view(-1), torch.tensor(True).view(-1))
-                    self.log('sofia_{}'.format(metric), f, on_epoch=True)
-
         clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
         penalty = 0
         for i, row in parametrized_df.iterrows():
             try:
                 if clipped_segmap[int(row.x), int(row.y), int(row.z)] == 0:
                     penalty -= config['hyperparameters']['fp_penalty']
-            except Exception:
-                penalty -= config['hyperparameters']['fp_penalty']
-
-        for metric, f in self.sofia_metrics.items():
-            f(torch.tensor(any_sources_found).view(-1), torch.tensor(has_source).view(-1))
-            self.log('sofia_{}'.format(metric), f, on_epoch=True)
+            except IndexError:
+                if clipped_segmap[int(row.x_geo), int(row.y_geo), int(row.z_geo)] == 0:
+                    penalty -= config['hyperparameters']['fp_penalty']
 
         self.log('point', torch.tensor(points), on_step=True, on_epoch=True, reduce_fx=torch.sum,
                  tbptt_reduce_fx=torch.sum)
@@ -383,7 +372,7 @@ class TrainSegmenter(BaseSegmenter):
             self.log('sofia_{}'.format(metric), f, on_epoch=True)
 
         if self.dataset_surrogates:
-            return model_out, clipped_segmap
+            return model_out.cpu(), clipped_segmap.cpu()
 
         return predictions
 

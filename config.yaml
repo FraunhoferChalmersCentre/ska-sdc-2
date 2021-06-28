@@ -72,5 +72,5 @@ hyperparameters:
 
 traversing:
   fits_file: null
-  checkpoint: resnet34-0-epoch=1107-val_loss=0.54.ckpt
+  checkpoint: resnet34-0-epoch=469-adjusted_point_epoch=12.64.ckpt
   gpu_memory_max: 7000

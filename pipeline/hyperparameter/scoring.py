@@ -79,7 +79,6 @@ def score_df(input_cube: torch.tensor, header: Header, model_out: torch.tensor, 
         if i in predictions_to_skip:
             predictions_to_skip.remove(i)
             continue
-
         match = segmentmap[int(row.z_geo), int(row.y_geo), int(row.x_geo)]
         print(match)
         if match == 0:

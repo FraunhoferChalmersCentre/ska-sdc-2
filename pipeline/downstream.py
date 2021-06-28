@@ -207,7 +207,7 @@ def compute_challenge_metrics(df, header, position, padding):
 
         shift = np.array([pos + pad for pos, pad in zip(position[0], padding)])
         df.loc[:, ['ra', 'dec', 'central_freq']] = wcs.all_pix2world(
-            np.array(df[['x_geo', 'y_geo', 'z_geo']] + shift, dtype=np.float32), 0)
+            np.array(df[['x', 'y', 'z']] + shift, dtype=np.float32), 0)
 
         if 'n_chan' in df.columns:
             df.loc[:, 'w20'] = df['n_chan'] * config['constants']['speed_of_light'] * header['CDELT3'] / header[
@@ -233,6 +233,13 @@ def compute_challenge_metrics(df, header, position, padding):
     return df
 
 
+def filter_df(df: pd.DataFrame):
+    for attr in ['x', 'y', 'z']:
+        df = df[(df[attr] > df[f'{attr}_min']) & (df[attr] < df[f'{attr}_max'])]
+
+    return df
+
+
 def parametrise_sources(header, input_cube, mask, position, parameters: Dict = None, padding=None):
     if parameters is None:
         parameters = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])
@@ -243,6 +250,11 @@ def parametrise_sources(header, input_cube, mask, position, parameters: Dict = N
         map(lambda t: t.squeeze().detach().cpu().numpy(), (input_cube, mask, position)))
 
     obj_mask, dilated_mask, df = extract_objects(input_cube, mask, parameters)
+
+    if len(df) == 0:
+        return df
+
+    df = filter_df(df)
 
     df = estimate_object_properties(input_cube, obj_mask, dilated_mask, df, parameters)
 
