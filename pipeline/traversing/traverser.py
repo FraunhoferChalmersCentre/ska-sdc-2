@@ -124,7 +124,7 @@ class EvaluationTraverser(ModelTraverser):
                     model_out.write(out_name)
 
                     df = pd.read_csv(filename.data.true(config['segmentation']['size']), sep=' ')
-                    df = prepare_df(df, self.header)
+                    df = prepare_df(df, self.header, do_filter=False)
                     for i, p in enumerate(['x', 'y', 'z']):
                         df = df[(df[p] < self.header['NAXIS{}'.format(i + 1)]) & (df[p] > 0)]
                     # full_header = getheader(filename.data.sky(config['segmentation']['size']))

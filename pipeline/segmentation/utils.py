@@ -32,8 +32,6 @@ def get_data(only_validation=False, robust_validation=False):
     random_state = np.random.RandomState(5)
     val_item_getter = ValidationItemGetter() if robust_validation else TrainingItemGetter()
     training_set, validation_set = splitting.train_val_split(dataset, .8, random_state=random_state,
-                                                             train_filter=config['segmentation']['filtering'][
-                                                                 'training'],
                                                              validation_item_getter=val_item_getter)
     print(len(training_set), len(validation_set))
     if only_validation:

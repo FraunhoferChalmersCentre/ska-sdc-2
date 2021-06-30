@@ -22,7 +22,7 @@ segmap_config = config['segmentation']['target']
 PADDING = 5
 
 
-def prepare_df(df: pd.DataFrame, header: Header):
+def prepare_df(df: pd.DataFrame, header: Header, do_filter=True):
     df = df.copy()
     wcs = WCS(header)
     df[['x', 'y', 'z']] = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0)
@@ -33,6 +33,10 @@ def prepare_df(df: pd.DataFrame, header: Header):
     df['major_radius_pixels'] = df['hi_size'] / (pixel_width_arcsec * 2)
     ratio = np.sqrt((np.cos(np.deg2rad(df.i)) ** 2) * (1 - ALPHA ** 2) + ALPHA ** 2)
     df['minor_radius_pixels'] = ratio * df['major_radius_pixels']
+
+    if do_filter and config['segmentation']['filtering']['fraction']:
+        df = df.sort_values(by=config['segmentation']['filtering']['power_measure'], ignore_index=True, ascending=False)
+        df = df.head(int(config['segmentation']['filtering']['fraction'] * len(df)))
 
     return df
 

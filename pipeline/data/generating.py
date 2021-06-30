@@ -69,6 +69,10 @@ def prepare_df(df: pd.DataFrame, hi_cube_file: str, coord_keys: List[str], cube_
     header = fits.getheader(hi_cube_file, ignore_blank=True)
     wcs = WCS(header)
 
+    if config['segmentation']['filtering']['fraction']:
+        df = df.sort_values(by=config['segmentation']['filtering']['power_measure'], ignore_index=True, ascending=False)
+        df = df.head(int(config['segmentation']['filtering']['fraction'] * len(df)))
+
     df[coord_keys] = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0).astype(np.int32)
     lower_freq, upper_freq = freq_boundary(df['central_freq'].values, df['w20'].values)
     upper_band = wcs.all_world2pix(
@@ -212,7 +216,8 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
                 sources_dict = append_source_attributes(sources_dict, row, segmentmap=segmentmap[slices].todense(),
                                                         allocation_dict=allocation_dict)
                 empty_shape = tuple([s.stop - s.start for s in slices])
-                empty_dict = add_empty_boxes(empty_dict, hi_cube_file, segmentmap, 1, empty_shape, min_f0, max_f1)
+                empty_dict = add_empty_boxes(empty_dict, hi_cube_file, segmentmap,
+                                             config['segmentation']['noise_per_source'], empty_shape, min_f0, max_f1)
 
         # Ensure scale is computed for all channels
         if max_f1 <= get_hi_shape(hi_cube_file)[-1]:

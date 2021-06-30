@@ -254,7 +254,7 @@ def parametrise_sources(header, input_cube, mask, position, parameters: Dict = N
     if len(df) == 0:
         return df
 
-    df = filter_df(df)
+    #df = filter_df(df)
 
     df = estimate_object_properties(input_cube, obj_mask, dilated_mask, df, parameters)
 

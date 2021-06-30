@@ -17,10 +17,10 @@ training_set, validation_set = get_data(robust_validation=config['segmentation']
 base_segmenter = get_base_segmenter()
 checkpoint_callback = get_checkpoint_callback()
 
-#train_sampler, val_sampler = get_equibatch_samplers(training_set, validation_set, epoch_merge=1)
+train_sampler, val_sampler = get_equibatch_samplers(training_set, validation_set, epoch_merge=1)
 
 segmenter = TrainSegmenter(base_segmenter,
-                           loss_fct=losses.JointLoss(losses.JaccardLoss(mode='binary'),
+                           loss_fct=losses.JointLoss(losses.DiceLoss(mode='binary', log_loss=True),
                                                      losses.SoftBCEWithLogitsLoss(), 1.0, 1.0),
                            training_set=training_set,
                            validation_set=validation_set,
@@ -32,8 +32,8 @@ segmenter = TrainSegmenter(base_segmenter,
                            random_mirror=config['segmentation']['augmentation'],
                            random_rotation=config['segmentation']['augmentation'],
                            robust_validation=config['segmentation']['robust_validation'],
-                           train_sampler=None,
-                           val_sampler=None  
+                           train_sampler=train_sampler,
+                           val_sampler=val_sampler
                            )
 
 logger = TensorBoardLogger("tb_logs",
@@ -41,6 +41,7 @@ logger = TensorBoardLogger("tb_logs",
                            version=datetime.now().strftime("%Y/%m/%d %H:%M:%S")
                            )
 trainer = pl.Trainer(max_epochs=100000, gpus=1, logger=logger, callbacks=[checkpoint_callback],
+                     #resume_from_checkpoint=ROOT_DIR + '/saved_models/resnet34-0-epoch=49-adjusted_point_epoch=-2478.68.ckpt',
                      check_val_every_n_epoch=10 if config['segmentation']['robust_validation'] else 1)
 
 trainer.fit(segmenter)

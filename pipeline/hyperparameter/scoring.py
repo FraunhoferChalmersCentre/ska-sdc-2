@@ -85,7 +85,7 @@ def score_df(input_cube: torch.tensor, header: Header, model_out: torch.tensor, 
             penalty += 1
             continue
 
-        matched, scores, predictions = score_source(header, df_true.iloc[int(match)], df_predicted, writer)
+        matched, scores, predictions = score_source(header, df_true.loc[int(match)], df_predicted.loc[[i]], writer)
         score += np.mean(list(scores.values()))
 
         for j, m in matched.iterrows():

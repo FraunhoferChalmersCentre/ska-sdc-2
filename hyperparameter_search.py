@@ -33,14 +33,25 @@ del cube_in, model_out
 
 space = {'radius_spatial': hp.uniform('radius_spatial', .5, 10),
          'radius_freq': hp.uniform('radius_freq', .5, 50),
-         'min_size_spatial': hp.uniform('min_size_spatial', .5, 10),
-         'min_size_freq': hp.uniform('min_size_freq', 10, 100),
+         'min_size_spatial': hp.uniform('min_size_spatial', .5, 7),
+         'min_size_freq': hp.uniform('min_size_freq', 10, 50),
          'min_voxels': hp.uniform('min_voxels', 1, 150),
          'dilation_max_spatial': hp.uniform('dilation_max_spatial', .5, 20),
          'dilation_max_freq': hp.uniform('dilation_max_freq', .5, 20),
-         'mask_threshold': hp.uniform('mask_threshold', .1, 1),
+         'mask_threshold': hp.uniform('mask_threshold', 1e-2, 1),
          }
 
-best = fmin(tuner.tuning_objective, space, algo=tpe.suggest, max_evals=1000)
+init_values = {'radius_spatial': 3,
+         'radius_freq': 3,
+         'min_size_spatial': 2,
+         'min_size_freq': 25,
+         'min_voxels': 90,
+         'dilation_max_spatial': 4,
+         'dilation_max_freq': 9,
+         'mask_threshold': .99,
+               }
+
+
+best = fmin(tuner.tuning_objective, space, algo=tpe.suggest, max_evals=1000, points_to_evaluate=[init_values])
 
 print(best)

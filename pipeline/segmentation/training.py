@@ -354,7 +354,7 @@ class TrainSegmenter(BaseSegmenter):
         penalty = 0
         for i, row in parametrized_df.iterrows():
             try:
-                if clipped_segmap[int(row.x), int(row.y), int(row.z)] == 0:
+                if clipped_segmap[int(row.x_geo), int(row.y_geo), int(row.z_geo)] == 0:
                     penalty -= config['hyperparameters']['fp_penalty']
             except IndexError:
                 if clipped_segmap[int(row.x_geo), int(row.y_geo), int(row.z_geo)] == 0:
