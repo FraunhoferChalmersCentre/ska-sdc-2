@@ -207,7 +207,7 @@ def compute_challenge_metrics(df, header, position, padding):
 
         shift = np.array([pos + pad for pos, pad in zip(position[0], padding)])
         df.loc[:, ['ra', 'dec', 'central_freq']] = wcs.all_pix2world(
-            np.array(df[['x', 'y', 'z']] + shift, dtype=np.float32), 0)
+            np.array(df[['x_geo', 'y_geo', 'z_geo']] + shift, dtype=np.float32), 0)
 
         if 'n_chan' in df.columns:
             df.loc[:, 'w20'] = df['n_chan'] * config['constants']['speed_of_light'] * header['CDELT3'] / header[
@@ -240,7 +240,7 @@ def filter_df(df: pd.DataFrame):
     return df
 
 
-def parametrise_sources(header, input_cube, mask, position, parameters: Dict = None, padding=None):
+def parametrise_sources(header, input_cube, mask, position, parameters: Dict = None, padding=None, min_intensity=0):
     if parameters is None:
         parameters = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])
     if mask.sum() == 0.:
@@ -254,10 +254,12 @@ def parametrise_sources(header, input_cube, mask, position, parameters: Dict = N
     if len(df) == 0:
         return df
 
-    #df = filter_df(df)
+    # df = filter_df(df)
 
     df = estimate_object_properties(input_cube, obj_mask, dilated_mask, df, parameters)
 
     df = compute_challenge_metrics(df, header, position, padding)
+
+    df = df[df['line_flux_integral'] > min_intensity]
 
     return df

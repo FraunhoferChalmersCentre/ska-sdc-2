@@ -42,17 +42,16 @@ def get_data(only_validation=False, robust_validation=False):
 
 def get_model():
     modelname = config['segmentation']['model_name']
-    model = smp.Unet(encoder_name=modelname, encoder_weights='imagenet', in_channels=1, classes=1,
-                     decoder_channels=[256, 128, 64, 32], encoder_depth=4, decoder_use_batchnorm=True)
+    model = smp.Unet(encoder_name=modelname, encoder_weights='imagenet', in_channels=1, classes=1, decoder_use_batchnorm=True)
     # Convert pretrained 2D model to 3D
-    Conv3dConverter(model, -1)
+    Conv3dConverter(model, -1, (32, 1, 32, 32, 32))
     return model
 
 
 def get_checkpoint_callback():
     model_id = filename.models.new_id()
     if config['segmentation']['robust_validation']:
-        checkpoint_callback = ModelCheckpoint(monitor='point_epoch',
+        checkpoint_callback = ModelCheckpoint(monitor='adjusted_point_epoch',
                                               save_top_k=20,
                                               dirpath=filename.models.directory,
                                               filename=config['segmentation']['model_name'] + '-' + str(

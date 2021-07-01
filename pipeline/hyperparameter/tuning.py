@@ -14,7 +14,7 @@ iteration = 0
 
 class Tuner:
     def __init__(self, threshold: float, sofia_parameters: dict, input_cube: np.ndarray, header: Header,
-                 model_out: np.ndarray, segmap: COO, df):
+                 model_out: np.ndarray, segmap: np.ndarray, df):
 
         self.header = header
         self.df = df
@@ -46,12 +46,11 @@ class Tuner:
             self.sofia_parameters['parameters']['dilatePixMax'] = int(np.round(args['dilation_max_spatial']))
             self.sofia_parameters['parameters']['dilateChanMax'] = int(np.round(args['dilation_max_freq']))
 
-            score = score_df(self.input_cube, self.header, self.model_out, self.df, self.segmap, self.sofia_parameters,
-                             self.threshold, writer)
-
-
             for k, v in args.items():
                 writer.add_scalar('hparams/' + k, v)
+
+            score = score_df(self.input_cube, self.header, self.model_out, self.df, self.segmap, self.sofia_parameters,
+                             self.threshold, args['min_intensity'], writer)
 
             writer.flush()
 

@@ -352,19 +352,21 @@ class TrainSegmenter(BaseSegmenter):
 
         clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
         penalty = 0
-        for i, row in parametrized_df.iterrows():
-            try:
-                if clipped_segmap[int(row.x_geo), int(row.y_geo), int(row.z_geo)] == 0:
-                    penalty -= config['hyperparameters']['fp_penalty']
-            except IndexError:
-                if clipped_segmap[int(row.x_geo), int(row.y_geo), int(row.z_geo)] == 0:
-                    penalty -= config['hyperparameters']['fp_penalty']
+        if not has_source and len(parametrized_df) > 0:
+            penalty = len(parametrized_df)
+        #for i, row in parametrized_df.iterrows():
+        #    try:
+        #        if clipped_segmap[int(row.x_geo), int(row.y_geo), int(row.z_geo)] == 0:
+        #            penalty -= config['hyperparameters']['fp_penalty']
+        #    except IndexError:
+        #        if clipped_segmap[int(row.x_geo), int(row.y_geo), int(row.z_geo)] == 0:
+        #            penalty -= config['hyperparameters']['fp_penalty']
 
         self.log('point', torch.tensor(points), on_step=True, on_epoch=True, reduce_fx=torch.sum,
                  tbptt_reduce_fx=torch.sum)
         self.log('penalty', torch.tensor(penalty), on_step=True, on_epoch=True, reduce_fx=torch.sum,
                  tbptt_reduce_fx=torch.sum)
-        self.log('adjusted_point', torch.tensor(points + penalty), on_step=True, on_epoch=True, reduce_fx=torch.sum,
+        self.log('adjusted_point', torch.tensor(points - penalty), on_step=True, on_epoch=True, reduce_fx=torch.sum,
                  tbptt_reduce_fx=torch.sum)
 
         for metric, f in self.sofia_metrics.items():
