@@ -69,6 +69,7 @@ characteristic_parameters:
 hyperparameters:
   threshold: 0.9
   fp_penalty: 1
+  min_intensity: 24
 
 traversing:
   fits_file: null

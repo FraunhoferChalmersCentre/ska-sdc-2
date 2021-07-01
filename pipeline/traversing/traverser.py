@@ -147,7 +147,8 @@ class EvaluationTraverser(ModelTraverser):
                 # Convert to numpy for Sofia
                 partition_position = torch.tensor([[s.start + p for s, p in zip(slices, self.cnn_padding)],
                                                    [s.stop - p for s, p in zip(slices, self.cnn_padding)]])
-                prediction = parametrise_sources(self.header, hi_cube_tensor.T, mask.T, partition_position)
+                prediction = parametrise_sources(self.header, hi_cube_tensor.T, mask.T, partition_position,
+                                                 min_intensity=config['hyperparameters']['min_intensity'])
 
                 # Filter Desired Characteristics and Non-edge-padding
                 if len(prediction) > 0:
