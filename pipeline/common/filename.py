@@ -53,6 +53,12 @@ class ProcessedFileName(DirectoryFileName):
         prepare_dir(path)
         return path
 
+    def validation_dataset(self, size: str, modelname: str, prob: int = 50):
+        name = 'validation_dataset_{}_{}_{}'.format(size, prob, modelname)
+        path = self.get_path(name)
+        prepare_dir(path)
+        return path
+
     def hyperopt_dataset(self, size: str, modelname: str, prob: int = 50):
         name = 'hyperopt_dataset_{}_{}_{}'.format(size, prob, modelname)
         path = self.get_path(name)

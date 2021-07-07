@@ -10,6 +10,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 import numpy as np
 from skimage import draw, transform, filters
+from tqdm import tqdm
 
 from pipeline.common import filename
 from definitions import config, logger
@@ -22,7 +23,7 @@ segmap_config = config['segmentation']['target']
 PADDING = 5
 
 
-def prepare_df(df: pd.DataFrame, header: Header, do_filter=True):
+def prepare_df(df: pd.DataFrame, header: Header, do_filter=True, extended_radius=0):
     df = df.copy()
     wcs = WCS(header)
     df[['x', 'y', 'z']] = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0)
@@ -30,7 +31,7 @@ def prepare_df(df: pd.DataFrame, header: Header, do_filter=True):
     df['n_channels'] = header['RESTFREQ'] * df['w20'] / (SPEED_OF_LIGHT * header['CDELT3'])
 
     pixel_width_arcsec = abs(header['CDELT1']) * 3600
-    df['major_radius_pixels'] = df['hi_size'] / (pixel_width_arcsec * 2)
+    df['major_radius_pixels'] = df['hi_size'] / (pixel_width_arcsec * 2) + extended_radius
     ratio = np.sqrt((np.cos(np.deg2rad(df.i)) ** 2) * (1 - ALPHA ** 2) + ALPHA ** 2)
     df['minor_radius_pixels'] = ratio * df['major_radius_pixels']
 
@@ -143,9 +144,17 @@ def create_from_df(df: pd.DataFrame, header: Header, fill_value=1.):
 
     allocation_dict = dict()
 
-    for i, row in df.iterrows():
+    for i, row in tqdm(df.iterrows(), total=df.shape[0]):
         half_lengths = (row.major_radius_pixels, row.major_radius_pixels, row.n_channels / 2)
         spans = get_spans(full_cube_shape, row[['x', 'y', 'z']], half_lengths)
+
+        add_to_segmap = True
+        for j, s in enumerate(spans):
+            if s[1] < 0 or s[0] > full_cube_shape[j]:
+                add_to_segmap = False
+                break
+        if not add_to_segmap:
+            continue
 
         fill_value_this = fill_value if fill_value is not None else i
         small_dense_cube = dense_cube(row, spans, fill_value_this)
@@ -163,7 +172,7 @@ def create_from_df(df: pd.DataFrame, header: Header, fill_value=1.):
             full_cube_pos = c + min_pos
             ignore = False
             for pos, shape in zip(full_cube_pos, full_cube_shape):
-                if pos < 0 or pos > shape:
+                if pos < 0 or pos >= shape:
                     ignore = True
 
             if not ignore:

@@ -16,11 +16,9 @@ import matplotlib.pyplot as plt
 
 from definitions import config, ROOT_DIR
 from pipeline.segmentation.base import BaseSegmenter
-from pipeline.segmentation.clip import partition_overlap, cube_evaluation, connect_outputs
 
-from pipeline.downstream import parametrise_sources
 from pipeline.data.ska_dataset import AbstractSKADataset
-from pipeline.segmentation.scoring import score_source, ANGLE_SCATTER_ATTRS, LINEAR_SCATTER_ATTRS
+from pipeline.segmentation.scoring import ANGLE_SCATTER_ATTRS, LINEAR_SCATTER_ATTRS, score_source
 
 
 class SortedSampler(Sampler):
@@ -136,9 +134,11 @@ class TrainSegmenter(BaseSegmenter):
                  train_padding=0,
                  random_rotation=True,
                  random_mirror=True,
-                 name=None):
+                 name=None,
+                 check_val_every_n_epoch=1):
         super().__init__(base.model, base.scale, base.mean, base.std)
 
+        self.check_val_every_n_epoch = check_val_every_n_epoch
         self.robust_validation = robust_validation
         self.name = name
         self.tr_pad = train_padding
@@ -202,26 +202,26 @@ class TrainSegmenter(BaseSegmenter):
         self.log_prediction_image()
 
     def log_image(self):
-        image = self.validation_set.get_attribute('image')[self.vis_id].squeeze()
+        image = self.training_set.get_attribute('image')[self.vis_id].squeeze()
         slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d), int(s / 2 - d) + 2 * d),
-                               zip(image.shape, self.validation_set.get_attribute('dim'))))
+                               zip(image.shape, self.training_set.get_attribute('dim'))))
         normed_img = (image[slices] - image[slices].min()) / (image[slices].max() - image[slices].min())
-        self._log_cross_sections(normed_img, self.validation_set[self.vis_id]['pa'], 'image')
-        segmap = self.validation_set.get_attribute('segmentmap')[self.vis_id].squeeze()
+        self._log_cross_sections(normed_img, self.training_set[self.vis_id]['pa'], 'image')
+        segmap = self.training_set.get_attribute('segmentmap')[self.vis_id].squeeze()
         if segmap.sum() == 0:
             raise ValueError('Logged segmentmap contains no source voxels. Reshuffle!')
 
-        self._log_cross_sections(segmap[slices], self.validation_set[self.vis_id]['pa'], 'segmentmap')
+        self._log_cross_sections(segmap[slices], self.training_set[self.vis_id]['pa'], 'segmentmap')
 
     def log_prediction_image(self):
-        image = self.validation_set.get_attribute('image')[self.vis_id].squeeze()
-        position = self.validation_set.get_attribute('position')[self.vis_id]
+        image = self.training_set.get_attribute('image')[self.vis_id].squeeze()
+        position = self.training_set.get_attribute('position')[self.vis_id]
         slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d), int(s / 2 - d) + 2 * d),
-                               zip(image.shape, self.validation_set.get_attribute('dim'))))
+                               zip(image.shape, self.training_set.get_attribute('dim'))))
         input_image = image[slices].to(self.device).view(1, 1, *image[slices].shape)
         f_channels = torch.tensor([[position[0, -1] + slices[-1].start, position[0, -1] + slices[-1].stop]])
         prediction = nn.Sigmoid()(self(input_image, f_channels)).squeeze()
-        self._log_cross_sections(prediction, self.validation_set[self.vis_id]['pa'], 'Prediction')
+        self._log_cross_sections(prediction, self.training_set[self.vis_id]['pa'], 'Prediction')
 
     def _log_cross_sections(self, cube: torch.Tensor, pa: float, tag: str):
         for i in range(self.vis_rotations):
@@ -279,7 +279,7 @@ class TrainSegmenter(BaseSegmenter):
 
     def validation_step(self, batch, batch_idx):
         if self.robust_validation:
-            return self.validation_step_robust(batch, batch_idx)
+            return self.do_robust_validation(batch, batch_idx)
         else:
             return self.validation_step_simple(batch, batch_idx)
 
@@ -294,96 +294,54 @@ class TrainSegmenter(BaseSegmenter):
 
         return y_hat.cpu(), y.cpu()
 
-    def validation_step_robust(self, batch, batch_idx):
-        # IMPORTANT: Single batch assumed when validating
-
-        # Compute padding
-        dim = (np.array(self.validation_set.get_attribute('dim')) * 2).astype(np.int32)
-        padding = (dim / 4).astype(np.int32)
-
-        overlap_slices_partition, overlaps_partition = partition_overlap(torch.squeeze(batch['image']).shape, dim,
-                                                                         padding)
-
-        outputs, efficient_slices = cube_evaluation(torch.squeeze(batch['image']), dim, padding,
-                                                    torch.squeeze(batch['position']), overlap_slices_partition[0],
-                                                    overlaps_partition[0], self)
-
-        model_out = connect_outputs(torch.squeeze(batch['image']), outputs, efficient_slices, padding)
-        model_out = model_out.view(1, 1, *model_out.shape).to(self.device)
-        mask = torch.round(nn.Sigmoid()(model_out) + .5 - self.threshold)
-
-        clipped_segmap = torch.empty(model_out.shape, device=self.device)
-        clipped_segmap[0, 0] = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
-
-        for metric, f in self.pixel_metrics.items():
-            f(mask.int().view(-1), clipped_segmap.int().view(-1))
-            self.log('pixel_{}'.format(metric), f, on_epoch=True)
-
-        has_source = batch_idx < self.validation_set.get_attribute('index')
-        clipped_input = torch.empty(model_out.shape, device=self.device)
-        clipped_input[0, 0] = batch['image'][0, 0][[slice(p, - p) for p in padding]]
-
-        parametrized_df = parametrise_sources(self.header, clipped_input.T, mask.T, batch['position'],
-                                              self.sofia_parameters, padding)
-        any_sources_found = len(parametrized_df) > 0
-
-        has_source, any_sources_found = tuple(
-            map(lambda t: torch.tensor(t, device=self.device).view(-1), (has_source, any_sources_found)))
-
+    def do_robust_validation(self):
+        evaluator = self.validation_set['evaluator']
+        evaluator.model = self
+        df_predicted = evaluator.traverse(remove_cols=False)
+        df_true = self.validation_set['df_true']
+        segmentmap = self.validation_set['segmentmap'].todense()
         points = 0
-        predictions = None
-        source_found = torch.tensor(False, device=self.device).view(-1)
 
-        if has_source and any_sources_found:
-            n_matched, scores, predictions = score_source(self.header, batch, parametrized_df)
+        n_found = 0
 
-            self.log('score_n_matches', n_matched, on_step=True, on_epoch=True)
-
-            if n_matched > 0:
-                source_found = torch.tensor(True, device=self.device).view(-1)
-                self.log('n_found', torch.ones(1), on_step=False, on_epoch=True, reduce_fx=torch.sum,
-                         tbptt_reduce_fx=torch.sum)
-
-                for k, v in scores.items():
-                    self.log('score_' + k, v, on_step=True, on_epoch=True)
-
-                points = np.mean([scores[k] for k in scores.keys()])
-                self.log('score_total', points, on_step=True, on_epoch=True)
-
-        clipped_segmap = batch['segmentmap'][0, 0][[slice(p, - p) for p in padding]]
         penalty = 0
-        if not has_source and len(parametrized_df) > 0:
-            penalty = len(parametrized_df)
-        #for i, row in parametrized_df.iterrows():
-        #    try:
-        #        if clipped_segmap[int(row.x_geo), int(row.y_geo), int(row.z_geo)] == 0:
-        #            penalty -= config['hyperparameters']['fp_penalty']
-        #    except IndexError:
-        #        if clipped_segmap[int(row.x_geo), int(row.y_geo), int(row.z_geo)] == 0:
-        #            penalty -= config['hyperparameters']['fp_penalty']
+        if len(df_predicted) > 0:
+            for i, row in df_predicted.iterrows():
+                try:
+                    match = segmentmap[int(row.z_geo), int(row.y_geo), int(row.x_geo)]
+                except IndexError:
+                    print('Index error')
+                    continue
+                print(match)
+                if match == 0:
+                    penalty += config['scoring']['fp_penalty']
+                    continue
 
-        self.log('point', torch.tensor(points), on_step=True, on_epoch=True, reduce_fx=torch.sum,
-                 tbptt_reduce_fx=torch.sum)
-        self.log('penalty', torch.tensor(penalty), on_step=True, on_epoch=True, reduce_fx=torch.sum,
-                 tbptt_reduce_fx=torch.sum)
-        self.log('adjusted_point', torch.tensor(points - penalty), on_step=True, on_epoch=True, reduce_fx=torch.sum,
-                 tbptt_reduce_fx=torch.sum)
+                n_found += 1
 
-        for metric, f in self.sofia_metrics.items():
-            f(source_found, has_source)
-            self.log('sofia_{}'.format(metric), f, on_epoch=True)
+                matched, scores, predictions = score_source(self.header, df_true.loc[int(match)],
+                                                            df_predicted.loc[[i]])
+                points += np.mean(list(scores.values()))
 
-        if self.dataset_surrogates:
-            return model_out.cpu(), clipped_segmap.cpu()
+            precision = n_found / (n_found + penalty)
+            recall = n_found / len(df_true)
+            self.log('precision', precision)
+            self.log('f1', 2 * (precision * recall) / (precision + recall))
+            self.log('recall', recall)
+            self.log('avg_point', points / n_found)
 
-        return predictions
+        self.log('n_found', n_found)
+        self.log('penalty', penalty)
+        self.log('points', points)
+        self.log('score', points - penalty)
 
     def validation_epoch_start(self):
-        pass
+        if self.robust_validation:
+            self.do_robust_validation()
 
     def validation_epoch_end(self, validation_step_outputs):
 
-        if len(validation_step_outputs) == 0:
+        if validation_step_outputs is None or len(validation_step_outputs) == 0:
             return
 
         if self.dataset_surrogates:
@@ -427,6 +385,9 @@ class TrainSegmenter(BaseSegmenter):
     def training_epoch_end(self, outputs: List[Any]) -> None:
         self.log_prediction_image()
 
+        if self.robust_validation and (self.current_epoch + 1) % self.check_val_every_n_epoch == 0:
+            self.do_robust_validation()
+
     def train_dataloader(self):
         if self.train_sampler is not None:
             return DataLoader(self.training_set, batch_size=self.batch_size, sampler=self.train_sampler, shuffle=False)
@@ -435,8 +396,7 @@ class TrainSegmenter(BaseSegmenter):
 
     def val_dataloader(self):
         if self.robust_validation:
-            return DataLoader(self.validation_set, batch_size=1, shuffle=False,
-                              sampler=SortedSampler(self.validation_set))
+            return
         else:
             if self.val_sampler is not None:
                 return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=False,

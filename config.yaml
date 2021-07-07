@@ -14,9 +14,9 @@ segmentation:
   limit_files: null
   model_name: resnet34
   filtering:
-    fraction: 0.4
+    fraction: 1 # Fraction of sources to use in training data
     power_measure: line_flux_integral # Column to use for filtering data to segmentation
-  noise_per_source: 2
+  noise_per_source: 8
   target:
     smoothing_fwhm: 0 # FWHM in arcsec of Gaussian for smoothing segmap. 7 according to data description, 0 = no smoothing.
     min_value: .1 # Minimum voxel value in final segmentmap used for segmentation
@@ -28,8 +28,8 @@ segmentation:
   augmentation: False
   batch_size: 128
   source_fraction:
-    training_start: 0.33
-    training_end: 0.33
+    training_start: 0.5
+    training_end: 0.5
     validation: 0.5
   robust_validation: True
   anneal_interval: 10
@@ -47,6 +47,8 @@ constants:
   h1_rest_freq: 1420000000.0
 
 scoring:
+  fp_penalty: 1
+  extended_radius: 6
   threshold:
     'pos': .3
     'hi_size': .3
@@ -67,11 +69,10 @@ characteristic_parameters:
   - w20
 
 hyperparameters:
-  threshold: 0.9
-  fp_penalty: 1
-  min_intensity: 24
+  threshold: 0.5
+  min_intensity: 10
 
 traversing:
   fits_file: null
-  checkpoint: resnet34-0-epoch=29-adjusted_point_epoch=20.58.ckpt
+  checkpoint: resnet18-0-epoch=479-adjusted_point_epoch=39.22.ckpt
   gpu_memory_max: 7000

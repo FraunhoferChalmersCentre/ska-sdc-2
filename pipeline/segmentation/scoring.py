@@ -8,23 +8,19 @@ ANGLE_SCATTER_ATTRS = ['pa', 'i']
 
 def prediction_match(header, row, batch):
     predicted_pos = np.array([row.ra, row.dec])
-    true_pos = np.array([batch['ra'].cpu().numpy(), batch['dec'].cpu().numpy()]).flatten()
+    true_pos = np.array([batch['ra'], batch['dec']]).flatten()
 
-    line_width_freq = header['RESTFREQ'] * batch['w20'].cpu().numpy() / config['constants']['speed_of_light']
-    if np.linalg.norm(predicted_pos - true_pos) * 3600 < batch['hi_size'].cpu().numpy() / 2 and np.abs(
-            batch['central_freq'].cpu().numpy() - row['central_freq']) < line_width_freq / 2:
+    line_width_freq = header['RESTFREQ'] * batch['w20'] / config['constants']['speed_of_light']
+    if np.linalg.norm(predicted_pos - true_pos) * 3600 < batch['hi_size'] / 2 and np.abs(
+            batch['central_freq'] - row['central_freq']) < line_width_freq / 2:
         return True
     else:
         return False
 
 
-def score_source(header, batch, parametrized_df):
-    true_attrs = {k: batch[k].cpu().numpy() for k in
+def score_source(header, batch, matched):
+    true_attrs = {k: batch[k] for k in
                   ['ra', 'dec', 'central_freq', 'line_flux_integral', 'hi_size', 'w20', 'pa', 'i']}
-    matched = parametrized_df.loc[[prediction_match(header, r, batch) for i, r in parametrized_df.iterrows()]].copy()
-    matched.loc[:, 'pos_error'] = np.sqrt(
-        np.square(matched['ra'] - true_attrs['ra']) + np.square(matched['dec'] - true_attrs['dec'])) * 3600 / \
-                           true_attrs['hi_size']
 
     predictions = {}
 

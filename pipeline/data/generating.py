@@ -13,7 +13,7 @@ from tqdm.auto import tqdm
 # attributes for the dataset generally
 from definitions import config
 
-EMPTY_CUBE_SHAPE = (64, 64, 64)
+EMPTY_CUBE_SHAPE = (32, 32, 32)
 
 GLOBAL_ATTRIBUTES = {'dim', 'index', 'scale', 'mean', 'std'}
 
@@ -39,7 +39,7 @@ def cache_hi_cube(hi_cube_file, min_f0, max_f1):
     f0 = min_f0
     hi_data_fits = fits.getdata(hi_cube_file, ignore_blank=True)
     hi_cube_tensor = torch.tensor(hi_data_fits[min_f0:max_f1].astype(np.float32), dtype=torch.float32).T
-    #(max_f1)
+    # (max_f1)
     for l in range(min_f0, max_f1):
         if len(scale) <= l:
             percentiles = np.percentile(hi_data_fits[l], [.1, 99.9])
@@ -189,6 +189,10 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
     prev_max_f1 = 0
     batch_counter = 0
 
+    n_noise_boxes = int(len(allocation_dict) * config['segmentation']['noise_per_source'])
+
+    freq_size = get_hi_shape(hi_cube_file)[-1]
+
     with tqdm(total=len(df)) as pbar:
         pbar.set_description('Adding boxes')
         for i, row in df.iterrows():
@@ -197,7 +201,9 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
 
             if row.f1 > max_f1:
                 # Add empty boxes from current cache
-                n_empty_batch = int(batch_counter * (1 - prob_galaxy) / prob_galaxy)
+                n_empty_batch = int(n_noise_boxes * (max_f1 - prev_max_f1) / freq_size)
+                empty_dict = add_noise_boxes(empty_dict, hi_cube_file, segmentmap, n_empty_batch, EMPTY_CUBE_SHAPE,
+                                             prev_max_f1, max_f1)
 
                 batch_counter = 0
 
@@ -208,6 +214,10 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
 
                 max_f1 = int(df['f1'].iloc[i:i + batch_fetches].max())
 
+                if max_f1 - prev_max_f1 < EMPTY_CUBE_SHAPE[-1]:
+                    max_f1 = prev_max_f1 + EMPTY_CUBE_SHAPE[-1]
+                    max_f1 = min(max_f1, get_hi_shape(hi_cube_file)[-1])
+
                 cache_hi_cube(hi_cube_file, min_f0, max_f1)
 
             if row.id in allocation_dict.keys():
@@ -217,13 +227,15 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
                 sources_dict = append_common_attributes(sources_dict, hi_cube_file=hi_cube_file, slices=slices)
                 sources_dict = append_source_attributes(sources_dict, row, segmentmap=segmentmap[slices].todense(),
                                                         allocation_dict=allocation_dict)
-                empty_dict = add_empty_boxes(empty_dict, hi_cube_file, segmentmap,
-                                             config['segmentation']['noise_per_source'], EMPTY_CUBE_SHAPE, prev_max_f1,
-                                             max_f1)
 
         # Ensure scale is computed for all channels
-        if max_f1 <= get_hi_shape(hi_cube_file)[-1]:
-            cache_hi_cube(hi_cube_file, max_f1, get_hi_shape(hi_cube_file)[-1])
+
+        n_empty_batch = int(n_noise_boxes * (freq_size - prev_max_f1) / freq_size)
+        cache_hi_cube(hi_cube_file, prev_max_f1, freq_size)
+        empty_dict = add_noise_boxes(empty_dict, hi_cube_file, segmentmap, n_empty_batch, EMPTY_CUBE_SHAPE,
+                                     prev_max_f1, freq_size)
+
+
 
     sources_dict['index'] = len(sources_dict['image'])
     sources_dict['scale'] = scale
@@ -233,7 +245,7 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
     return sources_dict, empty_dict
 
 
-def add_empty_boxes(data: dict, hi_cube_file: str, segmentmap: sparse.COO, n_empty_cubes: int,
+def add_noise_boxes(data: dict, hi_cube_file: str, segmentmap: sparse.COO, n_empty_cubes: int,
                     empty_cube_dim: tuple,
                     min_f: int,
                     max_f: int):

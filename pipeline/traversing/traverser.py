@@ -70,7 +70,7 @@ class EvaluationTraverser(ModelTraverser):
     def __len__(self):
         return len(self.slices_partition)
 
-    def traverse(self, for_validation=False) -> pd.DataFrame:
+    def traverse(self, for_validation=False, remove_cols=True) -> pd.DataFrame:
         if self.j_loop > 0:
             df = pd.read_csv(self.df_name)
         else:
@@ -154,7 +154,8 @@ class EvaluationTraverser(ModelTraverser):
                 if len(prediction) > 0:
                     prediction = remove_non_edge_padding(slices, self.cube_shape, self.cnn_padding, self.sofia_padding,
                                                          prediction)
-                    prediction = prediction[config['characteristic_parameters']]
+                    if remove_cols:
+                        prediction = prediction[config['characteristic_parameters']]
 
                     # Concatenate DataFrames
                     df = df.append(prediction)

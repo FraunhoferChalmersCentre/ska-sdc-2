@@ -48,22 +48,18 @@ def filter_units(dataset: Dict, units: np.ndarray, attribute: str, fraction: flo
     return np.concatenate([source_units, empty_units])
 
 
-def split(dataset: Dict, left_fraction: float, required_attrs: List[str], random_state: np.random.RandomState,
+def split(dataset: Dict, required_attrs: List[str], left_fraction: float = None, split_point=None,
           left_filter: float = None, right_filter: float = None, filter_attr: str = 'line_flux_integral'):
     n_units = len(dataset[required_attrs[0]])
 
     all_units = np.arange(n_units)
-    noise_units = all_units[all_units >= dataset['index']]
-    source_units = all_units[all_units < dataset['index']]
 
-    noise_positions = [p[0, 0] for p in dataset['position'][dataset['index']:]]
-    noise_split = np.percentile(noise_positions, int(left_fraction * 100))
-    source_positions = [p[0, 0] for p in dataset['position'][:dataset['index']]]
-    source_split = np.percentile(source_positions, int(left_fraction * 100))
+    positions = [p[1, 0] for p in dataset['position']]
 
-    left_units = np.concatenate(
-        ([noise_units[i] for i in range(len(noise_units)) if noise_positions[i] < noise_split],
-         [source_units[i] for i in range(len(source_units)) if source_positions[i] < source_split]))
+    if split_point is None:
+        split_point = np.percentile(positions, int(left_fraction * 100))
+
+    left_units = np.array([i for i in all_units if positions[i] < split_point])
 
     right_units = np.setdiff1d(all_units, left_units).astype(np.int32)
 
@@ -75,7 +71,7 @@ def split(dataset: Dict, left_fraction: float, required_attrs: List[str], random
 
     splits = tuple(map(np.sort, [left_units, right_units]))
 
-    return tuple(map(lambda s: fill_dict(s, dataset, required_attrs), splits))
+    return *tuple(map(lambda s: fill_dict(s, dataset, required_attrs), splits)), split_point
 
 
 def add_transforms(base_dataset):
@@ -123,10 +119,10 @@ def merge(*datasets: Dict):
     return merged
 
 
-def train_val_split(dataset: Dict, train_fraction: float, required_attrs: List[str] = ['image', 'position'],
-                    random_state=np.random.RandomState(), train_filter=None,
-                    validation_item_getter=ValidationItemGetter()):
-    train, validation = split(dataset, train_fraction, required_attrs, random_state, left_filter=train_filter)
+def train_val_split(dataset: Dict, train_fraction: float = None, split_point=None,
+                    required_attrs: List[str] = ['image', 'position'],                     train_filter=None, validation_item_getter=ValidationItemGetter()):
+    train, validation, split_point = split(dataset, required_attrs, left_filter=train_filter,
+                                           left_fraction=train_fraction, split_point=split_point)
     datsets = (SKADataSet(train, TrainingItemGetter()), SKADataSet(validation, validation_item_getter, random_type=1))
 
-    return tuple(map(add_transforms, datsets))
+    return *tuple(map(add_transforms, datsets)), split_point

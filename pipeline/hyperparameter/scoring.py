@@ -9,7 +9,7 @@ from astropy.io.fits import Header
 from sparse import COO
 from torch.utils.tensorboard import SummaryWriter
 
-from definitions import config
+from definitions import config, ROOT_DIR
 from pipeline.downstream import parametrise_sources
 from pipeline.segmentation.scoring import LINEAR_SCATTER_ATTRS, ANGLE_SCATTER_ATTRS
 
@@ -76,12 +76,11 @@ def score_df(input_cube: torch.tensor, header: Header, model_out: torch.tensor, 
     n_found = 0
 
     penalty = 0
-
     for i, row in df_predicted.iterrows():
         match = segmentmap[int(row.z_geo), int(row.y_geo), int(row.x_geo)]
         print(match)
         if match == 0:
-            penalty += 1
+            penalty += config['scoring']['fp_penalty']
             continue
 
         n_found += 1
@@ -100,5 +99,8 @@ def score_df(input_cube: torch.tensor, header: Header, model_out: torch.tensor, 
     writer.add_scalar('penalty', penalty)
     writer.add_scalar('points', points)
     writer.add_scalar('score', points - penalty)
+
+    scoring_df = df_predicted[config['characteristic_parameters']]
+    scoring_df.to_csv(ROOT_DIR + '/predicted_dfs/{:.2f}.txt'.format(points - penalty), sep=' ', index_label='id')
 
     return points - penalty
