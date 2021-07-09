@@ -18,7 +18,7 @@ from definitions import config, ROOT_DIR
 from pipeline.segmentation.base import BaseSegmenter
 
 from pipeline.data.ska_dataset import AbstractSKADataset
-from pipeline.segmentation.scoring import ANGLE_SCATTER_ATTRS, LINEAR_SCATTER_ATTRS, score_source
+from pipeline.segmentation.scoring import score_df
 
 
 class SortedSampler(Sampler):
@@ -298,42 +298,10 @@ class TrainSegmenter(BaseSegmenter):
         evaluator = self.validation_set['evaluator']
         evaluator.model = self
         df_predicted = evaluator.traverse(remove_cols=False)
-        df_true = self.validation_set['df_true']
-        segmentmap = self.validation_set['segmentmap'].todense()
-        points = 0
 
-        n_found = 0
-
-        penalty = 0
-        if len(df_predicted) > 0:
-            for i, row in df_predicted.iterrows():
-                try:
-                    match = segmentmap[int(row.z_geo), int(row.y_geo), int(row.x_geo)]
-                except IndexError:
-                    print('Index error')
-                    continue
-                print(match)
-                if match == 0:
-                    penalty += config['scoring']['fp_penalty']
-                    continue
-
-                n_found += 1
-
-                matched, scores, predictions = score_source(self.header, df_true.loc[int(match)],
-                                                            df_predicted.loc[[i]])
-                points += np.mean(list(scores.values()))
-
-            precision = n_found / (n_found + penalty)
-            recall = n_found / len(df_true)
-            self.log('precision', precision)
-            self.log('f1', 2 * (precision * recall) / (precision + recall))
-            self.log('recall', recall)
-            self.log('avg_point', points / n_found)
-
-        self.log('n_found', n_found)
-        self.log('penalty', penalty)
-        self.log('points', points)
-        self.log('score', points - penalty)
+        metrics = score_df(df_predicted, self.validation_set['df_true'], self.validation_set['segmentmap'].todense())
+        for k, v in metrics.items():
+            self.log(k, v)
 
     def validation_epoch_start(self):
         if self.robust_validation:
@@ -351,36 +319,6 @@ class TrainSegmenter(BaseSegmenter):
                 self.log(surrogate, f(model_outs, segmaps), on_epoch=True)
 
             return
-
-        if self.robust_validation and config['segmentation']['save_plots']:
-            predictions = {k + '_pred': [v[k][0] for v in validation_step_outputs] for k in
-                           validation_step_outputs[0].keys()}
-            true_values = {k + '_true': [v[k][1] for v in validation_step_outputs] for k in
-                           validation_step_outputs[0].keys()}
-            df = pd.DataFrame({**predictions, **true_values})
-            csv_name = 'result_{}.csv'.format(self.name) if self.name else datetime.now().strftime("%m%d%Y_%H%M%S")
-            df.to_csv(csv_name)
-
-            for k in validation_step_outputs[0].keys():
-                pred_arr = df[[k + '_pred', k + '_true']]
-                fig = plt.figure()
-
-                if k in ANGLE_SCATTER_ATTRS:
-                    pred_arr = np.deg2rad(pred_arr)
-                    plt.scatter(np.cos(pred_arr[k + '_pred'] - pred_arr[k + '_true']),
-                                np.sin(pred_arr[k + '_pred'] - pred_arr[k + '_true']), c='r', alpha=.05)
-
-                    v = np.linspace(0, 2 * np.pi)
-                    plt.plot(np.cos(v), np.sin(v), alpha=.01)
-                elif k in LINEAR_SCATTER_ATTRS:
-                    plt.scatter(df[k + '_pred'], df[k + '_true'], alpha=.05)
-                    plt.xlabel('Prediction')
-                    plt.ylabel('True value')
-                    l = [df[k + '_pred'].min(), df[k + '_pred'].max()]
-                    plt.plot(l, l, 'r')
-
-                plt.gca().set_aspect('equal', adjustable='box')
-                self.logger.experiment.add_figure('Scatter/' + k, fig, self.global_step)
 
     def training_epoch_end(self, outputs: List[Any]) -> None:
         self.log_prediction_image()

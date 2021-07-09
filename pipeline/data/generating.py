@@ -1,6 +1,5 @@
 from itertools import starmap
-from typing import Dict, List, Iterable
-import sys
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -13,7 +12,8 @@ from tqdm.auto import tqdm
 # attributes for the dataset generally
 from definitions import config
 
-EMPTY_CUBE_SHAPE = (32, 32, 32)
+empty_cube_shape = (config['segmentation']['cube_size']['spatial'], config['segmentation']['cube_size']['spatial'],
+                    config['segmentation']['cube_size']['freq'])
 
 GLOBAL_ATTRIBUTES = {'dim', 'index', 'scale', 'mean', 'std'}
 
@@ -181,7 +181,7 @@ def get_hi_shape(hi_cube_file: str):
 
 
 def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_file: str, coord_keys: List[str],
-              segmentmap: sparse.COO, allocation_dict: dict, n_memory_batches: int, prob_galaxy: float):
+              segmentmap: sparse.COO, allocation_dict: dict, n_memory_batches: int):
     global scale
     batch_fetches = int(len(df) / n_memory_batches)
 
@@ -194,7 +194,7 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
     freq_size = get_hi_shape(hi_cube_file)[-1]
 
     with tqdm(total=len(df)) as pbar:
-        pbar.set_description('Adding boxes')
+        pbar.set_description('Sampling dataset')
         for i, row in df.iterrows():
 
             pbar.update(1)
@@ -202,7 +202,7 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
             if row.f1 > max_f1:
                 # Add empty boxes from current cache
                 n_empty_batch = int(n_noise_boxes * (max_f1 - prev_max_f1) / freq_size)
-                empty_dict = add_noise_boxes(empty_dict, hi_cube_file, segmentmap, n_empty_batch, EMPTY_CUBE_SHAPE,
+                empty_dict = add_noise_boxes(empty_dict, hi_cube_file, segmentmap, n_empty_batch, empty_cube_shape,
                                              prev_max_f1, max_f1)
 
                 batch_counter = 0
@@ -214,8 +214,8 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
 
                 max_f1 = int(df['f1'].iloc[i:i + batch_fetches].max())
 
-                if max_f1 - prev_max_f1 < EMPTY_CUBE_SHAPE[-1]:
-                    max_f1 = prev_max_f1 + EMPTY_CUBE_SHAPE[-1]
+                if max_f1 - prev_max_f1 < empty_cube_shape[-1]:
+                    max_f1 = prev_max_f1 + empty_cube_shape[-1]
                     max_f1 = min(max_f1, get_hi_shape(hi_cube_file)[-1])
 
                 cache_hi_cube(hi_cube_file, min_f0, max_f1)
@@ -232,10 +232,8 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
 
         n_empty_batch = int(n_noise_boxes * (freq_size - prev_max_f1) / freq_size)
         cache_hi_cube(hi_cube_file, prev_max_f1, freq_size)
-        empty_dict = add_noise_boxes(empty_dict, hi_cube_file, segmentmap, n_empty_batch, EMPTY_CUBE_SHAPE,
+        empty_dict = add_noise_boxes(empty_dict, hi_cube_file, segmentmap, n_empty_batch, empty_cube_shape,
                                      prev_max_f1, freq_size)
-
-
 
     sources_dict['index'] = len(sources_dict['image'])
     sources_dict['scale'] = scale
@@ -263,14 +261,13 @@ def add_noise_boxes(data: dict, hi_cube_file: str, segmentmap: sparse.COO, n_emp
     return data
 
 
-def split_by_size(df: pd.DataFrame, hi_cube_file: str, segmentmap: sparse.COO, allocation_dict: dict,
-                  prob_galaxy: float, cube_dim: tuple, n_memory_batches=20, splitsize=60):
+def split_by_size(df: pd.DataFrame, hi_cube_file: str, segmentmap: sparse.COO, allocation_dict: dict, cube_dim: tuple,
+                  n_memory_batches=20, splitsize=60):
     """
     :param df: truth catalogue values of the galaxies
     :param hi_cube_file: filename of H1 data cube
     :param segmentmap: sparse source map
     :param wcs: world coordinate system
-    :param prob_galaxy: proportion of data points containing a galaxy
     :param cube_dim: dimension of SMALL sampling cube (n*m*o)
     :return: Dictionary with attribute as key
     """
@@ -281,7 +278,7 @@ def split_by_size(df: pd.DataFrame, hi_cube_file: str, segmentmap: sparse.COO, a
     df = prepare_df(df, hi_cube_file, coord_keys, cube_dim)
 
     source_dict, empty_dict = add_boxes(source_dict, empty_dict, df, hi_cube_file, coord_keys, segmentmap,
-                                        allocation_dict, n_memory_batches, prob_galaxy)
+                                        allocation_dict, n_memory_batches)
 
     n_splits = int((len(source_dict['image']) + len(empty_dict['image'])) / splitsize)
 

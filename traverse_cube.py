@@ -28,13 +28,11 @@ torch.cuda.empty_cache()
 # EvaluationTraverser
 model_input_dim = np.array([128, 128, 128])
 cnn_padding = np.array([8, 8, 8])
-desired_dim = 4 * (model_input_dim - 2 * cnn_padding)
+desired_dim = np.array([2, 2, 20]) * (model_input_dim - 2 * cnn_padding)
 
-sofia_padding = np.array([8, 8, 50])
+sofia_padding = np.array([12, 12, 100])
 
 mbatch = max_batch_size(segmenter.model, model_input_dim, config['traversing']['gpu_memory_max'])
 
 evaluator = EvaluationTraverser(segmenter, fits_file, model_input_dim, desired_dim, cnn_padding,
-                                sofia_padding, mbatch, n_parallel=args.n_parallel, i_job=args.i_job)
-
-df = evaluator.traverse()
+                                sofia_padding, mbatch, n_parallel=1, i_job=0)

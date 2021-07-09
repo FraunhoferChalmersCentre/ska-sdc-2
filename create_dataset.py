@@ -1,7 +1,6 @@
 from definitions import config
 
 size = config['segmentation']['size']
-prob = 50
 splitsize = config['data']['splitsize']
 
 # %%
@@ -24,9 +23,7 @@ spatial = config['segmentation']['cube_size']['spatial']
 freq = config['segmentation']['cube_size']['freq']
 cube_dim = (spatial, spatial, freq)
 
-galax_prob = prob / 100
-
-splitted_datasets = split_by_size(df, fname, segmentmap, allocation_dict, galax_prob, cube_dim,
+splitted_datasets = split_by_size(df, fname, segmentmap, allocation_dict, cube_dim,
                                   n_memory_batches=config['data']['memory_batches'], splitsize=splitsize)
 
 # %%
@@ -38,13 +35,13 @@ import string
 import random
 import glob
 
-directory = filename.processed.dataset(size, prob)
+directory = filename.processed.dataset(size)
 
 random.seed(10)
 
 for f in glob.glob('{}/*'.format(directory)):
     os.remove(f)
 
-for i, dataset_split in enumerate(tqdm(splitted_datasets)):
+for i, dataset_split in enumerate(tqdm(splitted_datasets, desc='Save dataset to disk')):
     name = ''.join(random.choice(string.ascii_letters) for j in range(20))
     torch.save(dataset_split, directory + '/{}.pt'.format(name))

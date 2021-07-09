@@ -144,7 +144,7 @@ def create_from_df(df: pd.DataFrame, header: Header, fill_value=1.):
 
     allocation_dict = dict()
 
-    for i, row in tqdm(df.iterrows(), total=df.shape[0]):
+    for i, row in tqdm(df.iterrows(), total=df.shape[0], desc='Creating segmentmap from catalogue'):
         half_lengths = (row.major_radius_pixels, row.major_radius_pixels, row.n_channels / 2)
         spans = get_spans(full_cube_shape, row[['x', 'y', 'z']], half_lengths)
 
@@ -178,8 +178,6 @@ def create_from_df(df: pd.DataFrame, header: Header, fill_value=1.):
             if not ignore:
                 cube[tuple(full_cube_pos)] = small_dense_cube[tuple(c)]
                 allocations.append(full_cube_pos)
-            else:
-                print(i, full_cube_pos, full_cube_shape)
 
         allocation_dict[row.id] = np.array(allocations)
 

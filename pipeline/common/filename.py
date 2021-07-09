@@ -47,20 +47,20 @@ class ProcessedFileName(DirectoryFileName):
     def allocation_dict(self, types):
         return self._eval_dev_name(types, 'segmap_eval.npz', 'allocation_{}dev.pb')
 
-    def dataset(self, size: str, prob: int = 50):
-        name = 'dataset_{}_{}'.format(size, prob)
+    def dataset(self, size: str):
+        name = 'dataset_{}'.format(size)
         path = self.get_path(name)
         prepare_dir(path)
         return path
 
-    def validation_dataset(self, size: str, modelname: str, prob: int = 50):
-        name = 'validation_dataset_{}_{}_{}'.format(size, prob, modelname)
+    def validation_dataset(self, size: str, reduction):
+        name = 'validation_dataset_{}_reduction_{}'.format(size, int(reduction))
         path = self.get_path(name)
         prepare_dir(path)
         return path
 
-    def hyperopt_dataset(self, size: str, modelname: str, prob: int = 50):
-        name = 'hyperopt_dataset_{}_{}_{}'.format(size, prob, modelname)
+    def hyperopt_dataset(self, size: str, reduction, checkpoint: str):
+        name = 'hyperopt_dataset_{}_reduction_{}_{}'.format(size, int(reduction), checkpoint)
         path = self.get_path(name)
         prepare_dir(path)
         return path

@@ -18,7 +18,7 @@ base_segmenter = get_base_segmenter()
 checkpoint_callback = get_checkpoint_callback()
 
 train_sampler, val_sampler = get_equibatch_samplers(training_set, validation_set,
-                                                                 config['segmentation']['robust_validation'])
+                                                    config['segmentation']['robust_validation'])
 
 segmenter = TrainSegmenter(base_segmenter,
                            loss_fct=losses.JointLoss(losses.DiceLoss(mode='binary'),

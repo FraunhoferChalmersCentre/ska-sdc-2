@@ -16,7 +16,7 @@ segmentation:
   filtering:
     fraction: 1 # Fraction of sources to use in training data
     power_measure: line_flux_integral # Column to use for filtering data to segmentation
-  noise_per_source: 8
+  noise_per_source: 4
   target:
     smoothing_fwhm: 0 # FWHM in arcsec of Gaussian for smoothing segmap. 7 according to data description, 0 = no smoothing.
     min_value: .1 # Minimum voxel value in final segmentmap used for segmentation
@@ -24,8 +24,10 @@ segmentation:
   cube_size:
     spatial: 32
     freq: 32
-  save_plots: False
-  augmentation: False
+  augmentation: True
+  validation:
+    split: 0.8
+    reduction: 0
   batch_size: 128
   source_fraction:
     training_start: 0.5
