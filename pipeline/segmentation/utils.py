@@ -27,7 +27,7 @@ from pipeline.data.generating import get_hi_shape
 
 MODEL_INPUT_DIM = np.array([64, 64, 64])
 CNN_PADDING = np.array([8, 8, 8])
-SOFIA_PADDING = np.array([8, 8, 50])
+SOFIA_PADDING = np.array([10, 10, 75])
 DESIRED_DIM = np.array([739, 739, 512])
 
 
@@ -108,7 +108,9 @@ def generate_validation_set(device='cuda'):
 
     df_true = generate_validation_catalogue(val_dataset_path, segmentmap)
 
-    return {'segmentmap': COO.from_numpy(segmentmap), 'df_true': df_true, 'evaluator': evaluator, 'header': header}
+    wcs = WCS(header)[[slice(c,-c) for c in CNN_PADDING]]
+
+    return {'segmentmap': COO.from_numpy(segmentmap), 'df_true': df_true, 'evaluator': evaluator, 'wcs': wcs}
 
 
 def get_data(only_validation=False, robust_validation=False):
