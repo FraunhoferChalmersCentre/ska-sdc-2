@@ -53,6 +53,8 @@ def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: np.n
 
     if len(df_predicted) > 0:
         for i, row in df_predicted.iterrows():
+            for attr in LINEAR_SCATTER_ATTRS + ANGLE_SCATTER_ATTRS:
+                df_predicted.loc[i, f'{attr}_prediction'] = row[attr]
             try:
                 match = segmentmap[int(row.z_geo), int(row.y_geo), int(row.x_geo)]
             except IndexError:
@@ -70,7 +72,6 @@ def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: np.n
 
             for attr in LINEAR_SCATTER_ATTRS + ANGLE_SCATTER_ATTRS:
                 df_predicted.loc[i, f'{attr}_score'] = scores[attr]
-                df_predicted.loc[i, f'{attr}_prediction'] = predictions[attr][0]
                 df_predicted.loc[i, f'{attr}_target'] = predictions[attr][1]
 
             points = np.mean(list(scores.values()))
@@ -101,4 +102,5 @@ def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: np.n
                 df_predicted.to_csv(f'{file_prefix}_score_{formatted_score}_{timestamp}.txt', sep=' ', index_label='id')
             else:
                 df_predicted.to_csv(f'predicted_dfs/score_{formatted_score}_{timestamp}.txt', sep=' ', index_label='id')
-        return metrics
+
+    return metrics

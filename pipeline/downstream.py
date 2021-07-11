@@ -5,7 +5,7 @@ from astropy.wcs import WCS
 from numpy.linalg import LinAlgError
 from sofia import linker, parametrisation, readoptions
 import pandas as pd
-from sklearn.decomposition import PCA
+from sklearn.decomposition import IncrementalPCA
 
 from definitions import config, ROOT_DIR
 
@@ -32,7 +32,7 @@ def estimate_axes(mask: np.ndarray, parameters: dict):
     if len(positions) < 3:
         return None, None
     try:
-        pca = PCA(n_components=2).fit(positions)
+        pca = IncrementalPCA(n_components=2, batch_size=len(positions)).fit(positions)
 
         return pca.explained_variance_[0], pca.explained_variance_[1]
     except LinAlgError:
@@ -44,7 +44,7 @@ def estimate_angle(mask: np.ndarray):
     if len(positions) < 4:
         return None
     try:
-        pca = PCA(n_components=3).fit(positions)
+        pca = IncrementalPCA(n_components=3, batch_size=len(positions)).fit(positions)
 
         angle = np.rad2deg(np.arctan2(pca.components_[0, 1], pca.components_[0, 2]))
 
@@ -205,6 +205,7 @@ def compute_challenge_metrics(df, header, position, padding):
     if len(df) > 0:
 
         shift = np.array([pos + pad for pos, pad in zip(position[0], padding)])
+
         df.loc[:, ['ra', 'dec', 'central_freq']] = wcs.all_pix2world(
             np.array(df[['x_geo', 'y_geo', 'z_geo']] + shift, dtype=np.float32), 0)
 
@@ -252,8 +253,6 @@ def parametrise_sources(header, input_cube, mask, position, parameters: Dict = N
 
     if len(df) == 0:
         return df
-
-    # df = filter_df(df)
 
     df = estimate_object_properties(input_cube, obj_mask, dilated_mask, df, parameters)
 

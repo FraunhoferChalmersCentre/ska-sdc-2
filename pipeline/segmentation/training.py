@@ -299,8 +299,9 @@ class TrainSegmenter(BaseSegmenter):
         evaluator.model = self
         df_predicted = evaluator.traverse()
 
-        df_predicted[['x_geo', 'y_geo', 'z_geo']] = self.validation_set['wcs'].all_world2pix(
-            df_predicted[['ra', 'dec', 'central_freq']], 0)
+        if len(df_predicted) > 0:
+            df_predicted[['x_geo', 'y_geo', 'z_geo']] = self.validation_set['wcs'].all_world2pix(
+                df_predicted[['ra', 'dec', 'central_freq']], 0)
         metrics = score_df(df_predicted, self.validation_set['df_true'], self.validation_set['segmentmap'].todense())
         for k, v in metrics.items():
             self.log(k, v)

@@ -4,6 +4,7 @@ from astropy.wcs import WCS
 from hyperopt import hp, fmin, tpe
 import pandas as pd
 from sofia import readoptions
+from sparse import COO
 
 from definitions import config, ROOT_DIR
 from pipeline.common import filename
@@ -19,7 +20,7 @@ hyperparam_set = filename.processed.hyperopt_dataset(size, 100 * reduction, chec
 header = getheader(hyperparam_set + '/clipped_input.fits', ignore_blank=True)
 input_cube = getdata(hyperparam_set + '/clipped_input.fits', ignore_blank=True).astype(np.float32)
 model_out = getdata(hyperparam_set + '/output.fits', ignore_blank=True).astype(np.float32)
-segmap = np.load(validation_set + '/segmentmap.npz')['arr_0'].astype(np.float32)
+segmap = COO.from_numpy(np.load(validation_set + '/segmentmap.npz')['arr_0'].astype(np.float32))
 df = pd.read_csv(validation_set + '/df.txt', sep=' ', index_col='id')
 
 sofia_params = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])

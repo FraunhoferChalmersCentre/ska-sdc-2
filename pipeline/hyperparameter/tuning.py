@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import torch
 from astropy.io.fits import Header
+from sparse import COO
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 
@@ -27,7 +28,7 @@ def create_predicted_catalogue(input_cube: torch.tensor, header: Header, model_o
 
 class Tuner:
     def __init__(self, threshold: float, sofia_parameters: dict, input_cube: np.ndarray, header: Header,
-                 model_out: np.ndarray, segmap: np.ndarray, df: pd.DataFrame):
+                 model_out: np.ndarray, segmap: COO, df: pd.DataFrame):
 
         self.header = header
         self.df_true = df
@@ -66,7 +67,7 @@ class Tuner:
                                                       self.sofia_parameters, self.threshold,
                                                       args['min_intensity'])
 
-            metrics = score_df(df_predicted, self.df_true, self.segmentmap)
+            metrics = score_df(df_predicted, self.df_true, self.segmentmap.todense())
 
             for k, v in metrics.items():
                 writer.add_scalar(k, v)
