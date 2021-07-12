@@ -31,22 +31,28 @@ space = {'radius_spatial': hp.uniform('radius_spatial', .5, 5),
          'radius_freq': hp.uniform('radius_freq', .5, 100),
          'min_size_spatial': hp.uniform('min_size_spatial', .5, 5),
          'min_size_freq': hp.uniform('min_size_freq', 10, 50),
+         'max_size_spatial': hp.uniform('max_size_spatial', 5, 30),
+         'max_size_freq': hp.uniform('max_size_freq', 50, 300),
          'min_voxels': hp.uniform('min_voxels', 1, 300),
          'dilation_max_spatial': hp.uniform('dilation_max_spatial', .5, 5),
          'dilation_max_freq': hp.uniform('dilation_max_freq', .5, 20),
          'mask_threshold': hp.uniform('mask_threshold', 1e-2, 1),
-         'min_intensity': hp.uniform('min_intensity', 0, 30)
+         'min_intensity': hp.uniform('min_intensity', 0, 30),
+         'max_intensity': hp.uniform('max_intensity', 200, 1000)
          }
 
 init_values = [{'radius_spatial': sofia_params['merge']['radiusX'],
                 'radius_freq': sofia_params['merge']['radiusZ'],
                 'min_size_spatial': sofia_params['merge']['minSizeX'],
                 'min_size_freq': sofia_params['merge']['minSizeZ'],
+                'max_size_spatial': sofia_params['merge']['maxSizeX'],
+                'max_size_freq': sofia_params['merge']['maxSizeZ'],
                 'min_voxels': sofia_params['merge']['minVoxels'],
                 'dilation_max_spatial': sofia_params['parameters']['dilatePixMax'],
                 'dilation_max_freq': sofia_params['parameters']['dilateChanMax'],
                 'mask_threshold': config['hyperparameters']['threshold'],
-                'min_intensity': config['hyperparameters']['min_intensity']
+                'min_intensity': config['hyperparameters']['min_intensity'],
+                'max_intensity': config['hyperparameters']['max_intensity']
                 }]
 
 best = fmin(tuner.tuning_objective, space, algo=tpe.suggest, max_evals=10000, points_to_evaluate=init_values)

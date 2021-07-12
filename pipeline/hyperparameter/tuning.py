@@ -15,13 +15,14 @@ iteration = 0
 
 
 def create_predicted_catalogue(input_cube: torch.tensor, header: Header, model_out: torch.tensor, sofia_params: dict,
-                               mask_threshold: float, min_intensity: float):
+                               mask_threshold: float, min_intensity: float, max_intensity: float):
     mask = torch.round(nn.Sigmoid()(model_out.to(torch.float32)) + 0.5 - mask_threshold).to(torch.float32)
     mask[mask > 1] = 1
 
     position = torch.zeros(2, 3)
     position[1] = torch.tensor(input_cube.shape)
-    df_predicted = parametrise_sources(header, input_cube, mask, position, sofia_params, min_intensity=min_intensity)
+    df_predicted = parametrise_sources(header, input_cube, mask, position, sofia_params, min_intensity=min_intensity,
+                                       max_intensity=max_intensity)
 
     return df_predicted
 
@@ -56,6 +57,9 @@ class Tuner:
             self.sofia_parameters['merge']['minSizeX'] = int(np.round(args['min_size_spatial']))
             self.sofia_parameters['merge']['minSizeY'] = int(np.round(args['min_size_spatial']))
             self.sofia_parameters['merge']['minSizeZ'] = int(np.round(args['min_size_freq']))
+            self.sofia_parameters['merge']['maxSizeX'] = int(np.round(args['max_size_spatial']))
+            self.sofia_parameters['merge']['maxSizeY'] = int(np.round(args['max_size_spatial']))
+            self.sofia_parameters['merge']['maxSizeZ'] = int(np.round(args['max_size_freq']))
             self.sofia_parameters['merge']['minVoxels'] = int(np.round(args['min_voxels']))
             self.sofia_parameters['parameters']['dilatePixMax'] = int(np.round(args['dilation_max_spatial']))
             self.sofia_parameters['parameters']['dilateChanMax'] = int(np.round(args['dilation_max_freq']))
@@ -65,7 +69,7 @@ class Tuner:
 
             df_predicted = create_predicted_catalogue(self.input_cube, self.header, self.model_out,
                                                       self.sofia_parameters, self.threshold,
-                                                      args['min_intensity'])
+                                                      args['min_intensity'], args['max_intensity'])
 
             metrics = score_df(df_predicted, self.df_true, self.segmentmap.todense())
 

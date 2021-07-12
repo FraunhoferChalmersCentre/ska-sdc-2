@@ -32,7 +32,7 @@ def estimate_axes(mask: np.ndarray, parameters: dict):
     if len(positions) < 3:
         return None, None
     try:
-        pca = IncrementalPCA(n_components=2, batch_size=len(positions)).fit(positions)
+        pca = IncrementalPCA(n_components=2, batch_size=30).fit(positions)
 
         return pca.explained_variance_[0], pca.explained_variance_[1]
     except LinAlgError:
@@ -44,7 +44,7 @@ def estimate_angle(mask: np.ndarray):
     if len(positions) < 4:
         return None
     try:
-        pca = IncrementalPCA(n_components=3, batch_size=len(positions)).fit(positions)
+        pca = IncrementalPCA(n_components=3, batch_size=30).fit(positions)
 
         angle = np.rad2deg(np.arctan2(pca.components_[0, 1], pca.components_[0, 2]))
 
@@ -240,7 +240,8 @@ def filter_df(df: pd.DataFrame):
     return df
 
 
-def parametrise_sources(header, input_cube, mask, position, parameters: Dict = None, padding=None, min_intensity=0):
+def parametrise_sources(header, input_cube, mask, position, parameters: Dict = None, padding=None, min_intensity=0,
+                        max_intensity=np.inf):
     if parameters is None:
         parameters = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])
     if mask.sum() == 0.:
@@ -258,6 +259,6 @@ def parametrise_sources(header, input_cube, mask, position, parameters: Dict = N
 
     df = compute_challenge_metrics(df, header, position, padding)
 
-    df = df[df['line_flux_integral'] > min_intensity]
+    df = df[(df['line_flux_integral'] > min_intensity) & (df['line_flux_integral'] < max_intensity)]
 
     return df
