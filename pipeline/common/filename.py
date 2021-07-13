@@ -3,8 +3,11 @@ from definitions import config
 
 
 def prepare_dir(directory):
-    if not os.path.exists(directory):
-        os.mkdir(directory)
+    splitted = directory[1:].split('/')
+    for i in range(1, len(splitted) + 1):
+        d = '/' + '/'.join(splitted[:i])
+        if not os.path.exists(d):
+            os.mkdir(d)
 
 
 class DirectoryFileName:

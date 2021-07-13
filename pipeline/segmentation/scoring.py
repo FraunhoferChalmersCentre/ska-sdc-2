@@ -3,7 +3,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from definitions import config
+from definitions import config, ROOT_DIR
+from pipeline.common.filename import DirectoryFileName
 
 LINEAR_SCATTER_ATTRS = ['central_freq', 'w20', 'line_flux_integral', 'hi_size']
 ANGLE_SCATTER_ATTRS = ['pa', 'i']
@@ -34,7 +35,7 @@ def score_source(true_df: pd.DataFrame, matched_prediction_df: pd.DataFrame):
 
 
 def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: np.ndarray, save_df: bool = True,
-             file_prefix=None):
+             sub_directory=None):
     total_points = 0
 
     n_matched = 0
@@ -96,11 +97,14 @@ def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: np.n
         metrics['score'] = total_points - total_penalty
 
         if save_df:
+
             timestamp = datetime.now().strftime("%m%d%Y_%H%M%S")
             formatted_score = '{:.2f}'.format(metrics['score'])
-            if file_prefix:
-                df_predicted.to_csv(f'{file_prefix}_score_{formatted_score}_{timestamp}.txt', sep=' ', index_label='id')
+            if sub_directory:
+                save_dir = DirectoryFileName(f'{ROOT_DIR}/predicted_dfs/{sub_directory}')
+                df_predicted.to_csv(f'{save_dir.directory}/score_{formatted_score}_{timestamp}.txt', sep=' ', index_label='id')
             else:
-                df_predicted.to_csv(f'predicted_dfs/score_{formatted_score}_{timestamp}.txt', sep=' ', index_label='id')
+                save_dir = DirectoryFileName(f'{ROOT_DIR}/predicted_dfs')
+                df_predicted.to_csv(f'{save_dir.directory}/score_{formatted_score}_{timestamp}.txt', sep=' ', index_label='id')
 
     return metrics

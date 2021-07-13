@@ -29,8 +29,9 @@ def create_predicted_catalogue(input_cube: torch.tensor, header: Header, model_o
 
 class Tuner:
     def __init__(self, threshold: float, sofia_parameters: dict, input_cube: np.ndarray, header: Header,
-                 model_out: np.ndarray, segmap: COO, df: pd.DataFrame):
+                 model_out: np.ndarray, segmap: COO, df: pd.DataFrame, name=None):
 
+        self.name = name
         self.header = header
         self.df_true = df
         self.segmentmap = segmap
@@ -48,7 +49,7 @@ class Tuner:
 
             version = str(self.iteration) + datetime.now().strftime("_%Y%m%d_%H%M%S")
 
-            writer = SummaryWriter(log_dir='hparam_logs/' + version)
+            writer = SummaryWriter(log_dir='hparam_logs/' + self.name + '/' + version)
 
             self.threshold = args['mask_threshold']
             self.sofia_parameters['merge']['radiusX'] = int(np.round(args['radius_spatial']))
@@ -71,7 +72,7 @@ class Tuner:
                                                       self.sofia_parameters, self.threshold,
                                                       args['min_intensity'], args['max_intensity'])
 
-            metrics = score_df(df_predicted, self.df_true, self.segmentmap.todense())
+            metrics = score_df(df_predicted, self.df_true, self.segmentmap.todense(), sub_directory=self.name)
 
             for k, v in metrics.items():
                 writer.add_scalar(k, v)

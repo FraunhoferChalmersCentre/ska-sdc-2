@@ -16,6 +16,7 @@ checkpoint = config['traversing']['checkpoint']
 
 validation_set = filename.processed.validation_dataset(size, 100 * reduction)
 hyperparam_set = filename.processed.hyperopt_dataset(size, 100 * reduction, checkpoint)
+name = f'{checkpoint}/{size}/{reduction}/'
 
 header = getheader(hyperparam_set + '/clipped_input.fits', ignore_blank=True)
 input_cube = getdata(hyperparam_set + '/clipped_input.fits', ignore_blank=True).astype(np.float32)
@@ -25,7 +26,8 @@ df = pd.read_csv(validation_set + '/df.txt', sep=' ', index_col='id')
 
 sofia_params = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])
 
-tuner = Tuner(config['hyperparameters']['threshold'], sofia_params, input_cube, header, model_out, segmap, df)
+tuner = Tuner(config['hyperparameters']['threshold'], sofia_params, input_cube, header, model_out, segmap, df,
+              name=name)
 
 space = {'radius_spatial': hp.uniform('radius_spatial', .5, 5),
          'radius_freq': hp.uniform('radius_freq', .5, 100),
