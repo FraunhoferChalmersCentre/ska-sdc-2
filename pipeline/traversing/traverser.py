@@ -99,6 +99,7 @@ class EvaluationTraverser(ModelTraverser):
                     outputs += o
                     efficient_slices += e
                 mask = connect_outputs(hi_cube_tensor, outputs, efficient_slices, self.cnn_padding)
+                del outputs
 
                 inner_slices = [slice(p, -p) for p in self.cnn_padding]
                 hi_cube_tensor = hi_cube_tensor[inner_slices]
@@ -122,6 +123,8 @@ class EvaluationTraverser(ModelTraverser):
                 prediction = parametrise_sources(self.header, hi_cube_tensor.T, mask.T, partition_position,
                                                  min_intensity=config['hyperparameters']['min_intensity'],
                                                  max_intensity=config['hyperparameters']['max_intensity'])
+
+                del hi_cube_tensor, mask
 
                 # Filter Desired Characteristics and Non-edge-padding
                 if len(prediction) > 0:
