@@ -4,25 +4,26 @@ from typing import Tuple
 import pickle
 
 import pandas as pd
-from sparse import DOK, COO, save_npz, load_npz
+from sparse import DOK, save_npz, load_npz
 from astropy.io.fits.header import Header
 from astropy.io import fits
 from astropy.wcs import WCS
 import numpy as np
 from skimage import draw, transform, filters
+from tqdm import tqdm
 
-from utils import filename
+from pipeline.common import filename
 from definitions import config, logger
 
 SPEED_OF_LIGHT = 3e5
 ALPHA = .2
 
-segmap_config = config['training']['target']
+segmap_config = config['segmentation']['target']
 
 PADDING = 5
 
 
-def prepare_df(df: pd.DataFrame, header: Header):
+def prepare_df(df: pd.DataFrame, header: Header, do_filter=True, extended_radius=0):
     df = df.copy()
     wcs = WCS(header)
     df[['x', 'y', 'z']] = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0)
@@ -30,14 +31,18 @@ def prepare_df(df: pd.DataFrame, header: Header):
     df['n_channels'] = header['RESTFREQ'] * df['w20'] / (SPEED_OF_LIGHT * header['CDELT3'])
 
     pixel_width_arcsec = abs(header['CDELT1']) * 3600
-    df['major_radius_pixels'] = df['hi_size'] / (pixel_width_arcsec * 2)
+    df['major_radius_pixels'] = df['hi_size'] / (pixel_width_arcsec * 2) + extended_radius
     ratio = np.sqrt((np.cos(np.deg2rad(df.i)) ** 2) * (1 - ALPHA ** 2) + ALPHA ** 2)
     df['minor_radius_pixels'] = ratio * df['major_radius_pixels']
+
+    if do_filter and config['segmentation']['filtering']['fraction']:
+        df = df.sort_values(by=config['segmentation']['filtering']['power_measure'], ignore_index=True, ascending=False)
+        df = df.head(int(config['segmentation']['filtering']['fraction'] * len(df)))
 
     return df
 
 
-def dense_cube(row: pd.Series, spans: Tuple):
+def dense_cube(row: pd.Series, spans: Tuple, fill_value=1.):
     cube_shape = tuple(map(lambda s: int(s[1] - s[0]), spans))
     cross_section = np.zeros(cube_shape[:2], dtype=np.float32)
 
@@ -50,7 +55,7 @@ def dense_cube(row: pd.Series, spans: Tuple):
     rows, cols = draw.ellipse(*center, *axes, shape=cube_shape[:2])
     if len(rows) == 0:
         return None
-    cross_section[rows, cols] = 1.
+    cross_section[rows, cols] = fill_value
 
     # Get span of rows in cross-section containing the ellipse
     minimum_start, maximum_end = rows.min(), rows.max() + 1
@@ -133,29 +138,48 @@ def gaussian_convolution(small_dense_cube: np.ndarray, header: Header):
     return small_dense_cube
 
 
-def create_from_df(df: pd.DataFrame, header: Header):
+def create_from_df(df: pd.DataFrame, header: Header, fill_value=1.):
     full_cube_shape = (header['NAXIS1'], header['NAXIS2'], header['NAXIS3'])
     cube = DOK(full_cube_shape, dtype=np.float32)
 
     allocation_dict = dict()
 
-    for i, row in df.iterrows():
+    for i, row in tqdm(df.iterrows(), total=df.shape[0], desc='Creating segmentmap from catalogue'):
         half_lengths = (row.major_radius_pixels, row.major_radius_pixels, row.n_channels / 2)
         spans = get_spans(full_cube_shape, row[['x', 'y', 'z']], half_lengths)
 
-        small_dense_cube = dense_cube(row, spans)
+        add_to_segmap = True
+        for j, s in enumerate(spans):
+            if s[1] < 0 or s[0] > full_cube_shape[j]:
+                add_to_segmap = False
+                break
+        if not add_to_segmap:
+            continue
+
+        fill_value_this = fill_value if fill_value is not None else i
+        small_dense_cube = dense_cube(row, spans, fill_value_this)
 
         if small_dense_cube is None or small_dense_cube.sum() == 0:
             continue
-        
-        cube_allocations = np.argwhere(small_dense_cube > 0).astype(np.int32)
 
-        allocations = cube_allocations + np.fromiter(map(lambda s: s[0], spans), dtype=np.int32)
+        cube_allocations = np.argwhere(small_dense_cube == fill_value_this).astype(np.int32)
 
-        allocation_dict[row.id] = allocations        
+        min_pos = np.fromiter(map(lambda s: s[0], spans), dtype=np.int32)
 
-        for a, c in zip(allocations, cube_allocations):
-            cube[tuple(a)] = small_dense_cube[tuple(c)]
+        allocations = []
+
+        for c in cube_allocations:
+            full_cube_pos = c + min_pos
+            ignore = False
+            for pos, shape in zip(full_cube_pos, full_cube_shape):
+                if pos < 0 or pos >= shape:
+                    ignore = True
+
+            if not ignore:
+                cube[tuple(full_cube_pos)] = small_dense_cube[tuple(c)]
+                allocations.append(full_cube_pos)
+
+        allocation_dict[row.id] = np.array(allocations)
 
     return cube.to_coo(), allocation_dict
 

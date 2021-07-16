@@ -5,19 +5,76 @@ path:
   processed: ./processed/
   models: ./saved_models/
 
-training:
+data:
+  splitsize: 60
+  memory_batches: 20
+
+segmentation:
+  size: dev_s
+  limit_files: null
+  model_name: resnet34
   filtering:
-    fraction:
-        training: 1.
-        validation: .3
-    power_measure: line_flux_integral # Column to use for filtering data to training
+    fraction: 1 # Fraction of sources to use in training data
+    power_measure: line_flux_integral # Column to use for filtering data to segmentation
+  noise_per_source: 4
   target:
     smoothing_fwhm: 0 # FWHM in arcsec of Gaussian for smoothing segmap. 7 according to data description, 0 = no smoothing.
-    min_value: .1 # Minimum voxel value in final segmentmap used for training
-    padding: 0.5 # Padding around minor axis as relative length of major axis. 0 is X-shape segmentmap, 1 means full cylinder
+    min_value: .1 # Minimum voxel value in final segmentmap used for segmentation
+    padding: 1 # Padding around minor axis as relative length of major axis. 0 is X-shape segmentmap, 1 means full cylinder
   cube_size:
     spatial: 32
     freq: 32
+  augmentation: True
+  validation:
+    split: 0.8
+    reduction: 0
+  batch_size: 128
+  source_fraction:
+    training_start: 0.5
+    training_end: 0.5
+    validation: 0.5
+  robust_validation: True
+  anneal_interval: 10
 
-torch:
-  num_workers: 0 # Ignored if CPU is used, larger values require more RAM
+downstream:
+  sofia:
+    param_file: /pipeline/SoFiA_parameters.txt
+  calibration:
+    hi_size:
+      coefficient: 1 # 0.48
+      intercept: 0 # 7.57
+
+constants:
+  speed_of_light: 299792.458
+  h1_rest_freq: 1420000000.0
+
+scoring:
+  fp_penalty: 1
+  extended_radius: 6
+  threshold:
+    'pos': .3
+    'hi_size': .3
+    'line_flux_integral': .1
+    'central_freq': .3
+    'pa': 10.
+    'i': 10.
+    'w20': .3
+
+characteristic_parameters:
+  - ra
+  - dec
+  - hi_size
+  - line_flux_integral
+  - central_freq
+  - pa
+  - i
+  - w20
+
+hyperparameters:
+  threshold: 0.5
+  min_intensity: 10
+
+traversing:
+  fits_file: null
+  checkpoint: resnet18-0-epoch=479-adjusted_point_epoch=39.22.ckpt
+  gpu_memory_max: 7000

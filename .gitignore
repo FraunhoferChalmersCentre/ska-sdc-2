@@ -145,7 +145,6 @@ cython_debug/
 *.csv
 *.npz
 
-data
 processed
 /runs/*
 */runs/
@@ -153,3 +152,4 @@ tb_logs/
 saved_models
 
 scratch.py
+/data/
