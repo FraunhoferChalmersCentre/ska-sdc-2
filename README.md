@@ -1,4 +1,30 @@
-This is the repository for team FORSKA-Sweden participating in SKA Science Data Challenge 2.
+## Description
+This is the repository for the pipeline of team FORSKA-Sweden, which participated in SKA Science Data Challenge 2. The 
+challenge was about detecting galaxies from a HI data cube and corresponding characteristics such as line flux integral
+and major axis. The production-ready pipeline consisted of the following components
+
+1. Traverse the HI cube with a segmentation model (U-Net) for producing a binary mask. The purpose of the mask is to
+separate voxels belonging to a galaxy and the background.
+2. Refine the mask and compute a list of separated mask objects. This step is mainly performed by the SoFiA software,
+which was seamlessly incorporated.
+3. Given the objects and corresponding masks, estimate the characterization properties evaluated in the challenge to
+produce the full catalogue.
+
+The pipeline will be described more detailed in upcoming papers.
+
+The code in this repository is mainly aimed to scientists doing research on source-finding methods, rather than seeing
+this as a ready-to-use source-finding tool.
+
+## Code overview
+All code for the pipeline is put into the pipeline module, which in its turn has four sub-modules with corresponding
+responsibilities:
+- common: Miscellaneous tasks used in different parts of the pipeline, currently all related to handling of file reading and writing
+- data: Generating of target mask and creation of data set readable by PyTorch-based components
+- hyperparameter: Utils for hyperparameter optimization, given a trained segmentation model
+- segmentation: Providing the segmentation model, based on PyTorch. Also tools for training and validation.
+- traversing: Efficiently traversing a full fits file, given a segmentation model and hyperparameters.
+- downstream: Refine a binary mask, object extract and estimation of characteristics. This is mainly done by calling
+SoFiA.
 
 ## Requirements
 Linux is the only OS used in development. CUDA-compatible GPU is highly recommended for acceleration of training and
