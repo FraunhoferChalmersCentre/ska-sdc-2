@@ -68,6 +68,12 @@ class ProcessedFileName(DirectoryFileName):
         prepare_dir(path)
         return path
 
+    def test_dataset(self, checkpoint):
+        name = f'test_{checkpoint}'
+        path = self.get_path(name)
+        prepare_dir(path)
+        return path
+
 
 class DataFileName(DirectoryFileName):
     def __init__(self):
@@ -75,6 +81,12 @@ class DataFileName(DirectoryFileName):
 
     def true(self, types):
         return self.get_path('sky_dev_{}truthcat_v2.txt'.format(types[-1].replace('s', '')))
+
+    def test_sky(self):
+        return self.get_path('sky_test.fits')
+
+    def test_true(self):
+        return self.get_path('sky_full_truthcat_v2.txt')
 
     def sky(self, types):
         return self._eval_dev_name(types, 'sky_eval.fits', 'sky_{}dev.fits')

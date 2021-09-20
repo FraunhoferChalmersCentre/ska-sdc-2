@@ -15,10 +15,9 @@ from astropy.io import fits
 import matplotlib.pyplot as plt
 
 from definitions import config, ROOT_DIR
-from pipeline.segmentation.base import BaseSegmenter
+from pipeline.segmentation.base import BaseSegmenter, AbstractValidator
 
 from pipeline.data.ska_dataset import AbstractSKADataset
-from pipeline.segmentation.scoring import score_df
 
 
 class SortedSampler(Sampler):
@@ -118,28 +117,24 @@ class TrainSegmenter(BaseSegmenter):
     def __init__(self, base: BaseSegmenter,
                  loss_fct: Any,
                  training_set: AbstractSKADataset,
-                 validation_set: AbstractSKADataset,
                  header: fits.Header,
                  optimizer: torch.optim.Optimizer,
+                 validator: AbstractValidator,
+                 validation_set: AbstractSKADataset = None,
                  batch_size=128,
-                 robust_validation=False,
                  vis_max_angle=180,
                  vis_rotations=4,
                  vis_id=None,
                  threshold=None,
-                 sofia_parameters=None,
-                 dataset_surrogates=True,
                  train_sampler=None,
                  val_sampler=None,
                  train_padding=0,
                  random_rotation=True,
                  random_mirror=True,
-                 name=None,
-                 check_val_every_n_epoch=1):
+                 name=None):
         super().__init__(base.model, base.scale, base.mean, base.std)
 
-        self.check_val_every_n_epoch = check_val_every_n_epoch
-        self.robust_validation = robust_validation
+        self.validator = validator
         self.name = name
         self.tr_pad = train_padding
         self.header = header
@@ -154,44 +149,6 @@ class TrainSegmenter(BaseSegmenter):
         self.vis_id = vis_id
         self.threshold = threshold
 
-        self.pixel_precision = pl.metrics.Precision(num_classes=1, multiclass=False)
-        self.pixel_recall = pl.metrics.Recall(num_classes=1, multiclass=False)
-        self.pixel_dice = pl.metrics.F1(num_classes=1, multiclass=False)
-
-        self.sofia_precision = pl.metrics.Precision(num_classes=1, multiclass=False)
-        self.sofia_recall = pl.metrics.Recall(num_classes=1, multiclass=False)
-        self.sofia_dice = pl.metrics.F1(num_classes=1, multiclass=False)
-
-        self.pixel_metrics = {
-            'precision': self.pixel_precision,
-            'recall': self.pixel_recall,
-            'dice': self.pixel_dice
-        }
-
-        self.sofia_metrics = {
-            'precision': self.sofia_precision,
-            'recall': self.sofia_recall,
-            'dice': self.sofia_dice
-        }
-
-        self.dice = losses.DiceLoss(mode='binary', from_logits=True)
-        self.lovasz = losses.BinaryLovaszLoss()
-        self.cross_entropy = losses.SoftBCEWithLogitsLoss()
-
-        self.surrogates = {
-            'soft_dice': self.dice,
-            'lovasz_hinge': self.lovasz,
-            'cross_entropy': self.cross_entropy,
-            'val_loss': self.loss_fct
-        }
-
-        if sofia_parameters is None:
-            self.sofia_parameters = readoptions.readPipelineOptions(
-                ROOT_DIR + config['downstream']['sofia']['param_file'])
-        else:
-            self.sofia_parameters = sofia_parameters
-
-        self.dataset_surrogates = dataset_surrogates
         self.train_sampler = train_sampler
         self.val_sampler = val_sampler
         self.random_rotation = random_rotation
@@ -278,56 +235,18 @@ class TrainSegmenter(BaseSegmenter):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        if self.robust_validation:
-            return self.do_robust_validation(batch, batch_idx)
-        else:
-            return self.validation_step_simple(batch, batch_idx)
+        return self.validator.validation_step(batch, batch_idx)
 
-    def validation_step_simple(self, batch, batch_idx):
-        x, y = batch['image'], batch['segmentmap']
-        f_channels = torch.empty((x.shape[0], 2), device=self.device)
-        for i in range(x.shape[0]):
-            f_channels[i, 0] = batch['position'][i, 0, -1] + batch['slices'][i][0][-1]
-            f_channels[i, 1] = batch['position'][i, 0, -1] + batch['slices'][i][1][-1]
-
-        y_hat = self(x, f_channels)
-
-        return y_hat.cpu(), y.cpu()
-
-    def do_robust_validation(self):
-        evaluator = self.validation_set['evaluator']
-        evaluator.model = self
-        df_predicted = evaluator.traverse()
-
-        if len(df_predicted) > 0:
-            df_predicted[['x_geo', 'y_geo', 'z_geo']] = self.validation_set['wcs'].all_world2pix(
-                df_predicted[['ra', 'dec', 'central_freq']], 0)
-        metrics = score_df(df_predicted, self.validation_set['df_true'], self.validation_set['segmentmap'].todense())
-        for k, v in metrics.items():
-            self.log(k, v)
-
-    def validation_epoch_start(self):
-        if self.robust_validation:
-            self.do_robust_validation()
+    def on_validation_start(self) -> None:
+        return self.validator.on_validation_start()
 
     def validation_epoch_end(self, validation_step_outputs):
-
-        if validation_step_outputs is None or len(validation_step_outputs) == 0:
-            return
-
-        if self.dataset_surrogates:
-            model_outs = torch.cat(tuple([p[0].reshape(-1) for p in validation_step_outputs])).reshape(1, 1, -1)
-            segmaps = torch.cat(tuple([p[1].reshape(-1) for p in validation_step_outputs])).reshape(1, 1, -1)
-            for surrogate, f in self.surrogates.items():
-                self.log(surrogate, f(model_outs, segmaps), on_epoch=True)
-
-            return
+        results = self.validator.validation_epoch_end(validation_step_outputs)
+        for k, v in results.items():
+            self.log(k, v)
 
     def training_epoch_end(self, outputs: List[Any]) -> None:
         self.log_prediction_image()
-
-        if self.robust_validation and (self.current_epoch + 1) % self.check_val_every_n_epoch == 0:
-            self.do_robust_validation()
 
     def train_dataloader(self):
         if self.train_sampler is not None:
@@ -336,14 +255,11 @@ class TrainSegmenter(BaseSegmenter):
             return DataLoader(self.training_set, batch_size=self.batch_size, shuffle=True)
 
     def val_dataloader(self):
-        if self.robust_validation:
-            return
+        if self.val_sampler is not None:
+            return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=False,
+                              sampler=self.val_sampler)
         else:
-            if self.val_sampler is not None:
-                return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=False,
-                                  sampler=self.val_sampler)
-            else:
-                return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=False)
+            return DataLoader(self.validation_set, batch_size=self.batch_size, shuffle=False)
 
     def configure_optimizers(self):
         return self.optimizer

@@ -2,19 +2,23 @@ import os
 import pickle
 from operator import itemgetter
 
-import pandas as pd
+import sparse
 import torch
 from astropy.io import fits
+from astropy.io.fits import getdata
 from astropy.wcs import WCS
 from pytorch_lightning.callbacks import ModelCheckpoint
 import numpy as np
+from pytorch_toolbelt import losses
 from spectral_cube import SpectralCube
-from sparse import COO
 
 from pipeline.data import splitting
 from pipeline.data.segmentmap import create_from_df, prepare_df
+from pipeline.data.ska_dataset import DummySKADataSet
 from pipeline.segmentation.base import BaseSegmenter
+from pipeline.segmentation.metrics import IncrementalDice, IncrementalAverageMetric, IncrementalCombo
 from pipeline.segmentation.training import EquiBatchBootstrapSampler
+from pipeline.segmentation.validation import FullValidationSetValidator
 from pipeline.traversing.memory import max_batch_size
 from pipeline.traversing.traverser import CubeCache, EvaluationTraverser
 from pipeline.common import filename
@@ -25,10 +29,10 @@ import segmentation_models_pytorch as smp
 
 from pipeline.data.generating import get_hi_shape
 
-MODEL_INPUT_DIM = np.array([64, 64, 64])
+MODEL_INPUT_DIM = np.array([128, 128, 128])
 CNN_PADDING = np.array([8, 8, 8])
-SOFIA_PADDING = np.array([10, 10, 75])
-DESIRED_DIM = np.array([739, 739, 512])
+DESIRED_DIM = np.array([2, 2, 20]) * (MODEL_INPUT_DIM - 2 * CNN_PADDING)
+SOFIA_PADDING = np.array([12, 12, 100])
 
 
 def generate_validation_input_cube(val_dataset_path):
@@ -55,79 +59,55 @@ def generate_validation_input_cube(val_dataset_path):
         return shape, header
 
 
-def generate_validation_segmentmap(val_dataset_path, header):
-    inner_slices = [slice(p, -p) for p in CNN_PADDING]
-    inner_slices.reverse()
-
-    df = pd.read_csv(filename.data.true(config['segmentation']['size']), sep=' ')
-    df = prepare_df(df, header, do_filter=False, extended_radius=config['scoring']['extended_radius'])
-
+def generate_validation_segmentmap(val_dataset_path, header, df):
     segmap_name = val_dataset_path + '/segmentmap.npz'
     if not os.path.isfile(segmap_name):
+        df = prepare_df(df, header, do_filter=False, extended_radius=config['scoring']['extended_radius'])
         segmentmap, _ = create_from_df(df, header, fill_value=None)
-        segmentmap = segmentmap.todense().T[inner_slices]
-        np.savez(segmap_name, segmentmap)
+        sparse.save_npz(segmap_name, segmentmap)
     else:
-        segmentmap = np.load(segmap_name)['arr_0'].astype(np.float32)
+        segmentmap = sparse.load_npz(segmap_name)
     return segmentmap
 
 
-def generate_validation_catalogue(val_dataset_path, segmentmap):
-    df_name = val_dataset_path + '/df.txt'
-    if not os.path.isfile(df_name):
-        df = pd.read_csv(filename.data.true(config['segmentation']['size']), sep=' ')
-        df = df.loc[np.unique(segmentmap).astype(np.int32), :]
-        df.to_csv(df_name, sep=' ', index_label='id')
-    else:
-        df = pd.read_csv(df_name, sep=' ', index_col='id')
-
-    return df
-
-
-def generate_validation_set(device='cuda'):
+def get_full_validator(segmenter: BaseSegmenter):
     val_dataset_path = filename.processed.validation_dataset(config['segmentation']['size'],
-                                                        100 * config['segmentation']['validation']['reduction'])
+                                                             100 * config['segmentation']['validation']['reduction'])
 
-    cube_shape, header = generate_validation_input_cube(val_dataset_path)
-
-    # EvaluationTraverser
-    desired_dim = np.array([min(d, s - 2 * c) for d, s, c in zip(DESIRED_DIM, np.flip(cube_shape), CNN_PADDING)])
-
-    base_segmenter = get_base_segmenter()
-    base_segmenter.to(device)
     torch.cuda.empty_cache()
+    segmenter.to(torch.device('cuda'))
 
-    mbatch = max_batch_size(base_segmenter.model, MODEL_INPUT_DIM, config['traversing']['gpu_memory_max'])
+    mbatch = max_batch_size(segmenter.model, MODEL_INPUT_DIM, config['traversing']['gpu_memory_max'])
 
-    fits_file = val_dataset_path + '/input_cube.fits'
+    fits_file = f'{val_dataset_path}/input_cube.fits'
 
-    evaluator = EvaluationTraverser(base_segmenter, fits_file, MODEL_INPUT_DIM, desired_dim, CNN_PADDING,
+    cube_shape = getdata(fits_file).T.shape
+    desired_dim = np.array([min(s - 2 * p, d) for s, p, d in zip(cube_shape, CNN_PADDING, DESIRED_DIM)])
+
+    evaluator = EvaluationTraverser(segmenter, fits_file, MODEL_INPUT_DIM, desired_dim, CNN_PADDING,
                                     SOFIA_PADDING, mbatch)
 
-    segmentmap = generate_validation_segmentmap(val_dataset_path, header)
+    surrogates = {
+        'val_loss': IncrementalCombo(IncrementalDice(), IncrementalAverageMetric(losses.SoftBCEWithLogitsLoss()))
+    }
 
-    df_true = generate_validation_catalogue(val_dataset_path, segmentmap)
+    validator = FullValidationSetValidator(segmenter, val_dataset_path, evaluator, surrogates)
 
-    wcs = WCS(header)[[slice(c,-c) for c in CNN_PADDING]]
-
-    return {'segmentmap': COO.from_numpy(segmentmap), 'df_true': df_true, 'evaluator': evaluator, 'wcs': wcs}
+    return validator
 
 
-def get_data(only_validation=False, robust_validation=False):
+def get_data(only_validation=False, full_set_validation=False):
     size = config['segmentation']['size']
 
     split_point = int(get_hi_shape(filename.data.sky(size))[0] * .8)
-
-    if robust_validation:
-        robust_validation_set = generate_validation_set()
 
     directory = filename.processed.dataset(size)
     dataset = filehandling.read_splitted_dataset(directory, limit_files=config['segmentation']['limit_files'])
 
     training_set, simple_validation_set, split_point = splitting.train_val_split(dataset, split_point=split_point)
 
-    if robust_validation:
-        validation_set = robust_validation_set
+    if full_set_validation:
+        validation_set = DummySKADataSet()
     else:
         validation_set = simple_validation_set
 
@@ -146,16 +126,16 @@ def get_model():
     return model
 
 
-def get_checkpoint_callback():
+def get_checkpoint_callback(use_sdc2_score=False, period=1):
     model_id = filename.models.new_id()
-    if config['segmentation']['robust_validation']:
+    if use_sdc2_score:
         checkpoint_callback = ModelCheckpoint(monitor='score',
                                               save_top_k=10,
                                               dirpath=filename.models.directory,
                                               filename=config['segmentation']['model_name'] + '-' + str(
                                                   model_id) + '-{epoch:02d}-{score:.2f}',
                                               mode='max',
-                                              period=10)
+                                              period=period)
     else:
         checkpoint_callback = ModelCheckpoint(monitor='val_loss',
                                               save_top_k=10,
@@ -163,7 +143,7 @@ def get_checkpoint_callback():
                                               filename=config['segmentation']['model_name'] + '-' + str(
                                                   model_id) + '-{epoch:02d}-{val_loss:.2f}',
                                               mode='min',
-                                              period=1)
+                                              period=period)
     return checkpoint_callback
 
 
@@ -213,7 +193,7 @@ def get_base_segmenter():
     return BaseSegmenter(model, scale, mean, std)
 
 
-def get_equibatch_samplers(training_set, validation_set, robust_validation, epoch_merge=1):
+def get_equibatch_samplers(training_set, validation_set, only_training=True, epoch_merge=1):
     intensities = np.ones(len(training_set))
     train_source_bs_end = int(
         config['segmentation']['batch_size'] * config['segmentation']['source_fraction']['training_end'])
@@ -228,7 +208,7 @@ def get_equibatch_samplers(training_set, validation_set, robust_validation, epoc
                                               n_samples=epoch_merge * len(training_set),
                                               anneal_interval=config['segmentation']['anneal_interval'])
 
-    if robust_validation:
+    if only_training:
         val_sampler = None
     else:
         val_source_bs = int(

@@ -132,6 +132,14 @@ class AbstractSKADataset(Dataset):
         raise NotImplementedError
 
 
+class DummySKADataSet(AbstractSKADataset):
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, item):
+        return torch.zeros(1, 1)
+
+
 class SKADataSet(AbstractSKADataset):
     def __init__(self, attributes: dict, item_getter: ItemGettingStrategy, random_type: Union[int, None] = None,
                  source_keys: list = None,
@@ -178,7 +186,6 @@ class SKADataSet(AbstractSKADataset):
             self.empty_keys += empty_keys
         self.common_keys = list(set.intersection(set(self.source_keys), set(self.empty_keys)))
         self.different_keys = list(set(self.source_keys) - set(self.common_keys))
-
 
     def get_keys(self):
         return self.data.keys()

@@ -4,6 +4,7 @@ import os
 from astropy.io.fits import getheader
 
 from pipeline.common import filename
+from pipeline.common.filename import prepare_dir
 from pipeline.data.segmentmap import create_from_df, prepare_df
 from pipeline.segmentation.base import BaseSegmenter
 from torch import nn
@@ -70,7 +71,7 @@ class EvaluationTraverser(ModelTraverser):
     def __len__(self):
         return len(self.slices_partition)
 
-    def traverse(self, save_output=False, remove_cols=True, output_name=None) -> pd.DataFrame:
+    def traverse(self, save_output=False, save_input=False, remove_cols=True, output_path=None) -> pd.DataFrame:
         if self.j_loop > 0:
             df = pd.read_csv(self.df_name)
         else:
@@ -104,22 +105,42 @@ class EvaluationTraverser(ModelTraverser):
                 inner_slices = [slice(p, -p) for p in self.cnn_padding]
                 hi_cube_tensor = hi_cube_tensor[inner_slices]
 
+                partition_position = torch.tensor([[s.start + p for s, p in zip(slices, self.cnn_padding)],
+                                                   [s.stop - p for s, p in zip(slices, self.cnn_padding)]])
+
                 if save_output:
                     inner_slices.reverse()
                     wcs = WCS(self.header)[inner_slices]
 
-                    if os.path.exists(output_name):
-                        os.remove(output_name)
+                    model_out_fits = SpectralCube(mask.T.cpu().numpy(), wcs, header=self.header)
+                    prepare_dir(f'{output_path}/model_out')
+                    if os.path.isfile(f'{output_path}/model_out/{j}.fits'):
+                        os.remove(f'{output_path}/model_out/{j}.fits')
+                    model_out_fits.write(f'{output_path}/model_out/{j}.fits', format='fits')
 
-                    model_out = SpectralCube(mask.T.cpu().numpy(), wcs, header=self.header)
-                    model_out.write(output_name)
+                    del model_out_fits
+
+                if save_input:
+                    partial_input_fits = SpectralCube(hi_cube_tensor.T.cpu().numpy(), wcs, header=self.header)
+                    prepare_dir(f'{output_path}/clipped_input')
+                    if os.path.isfile(f'{output_path}/clipped_input/{j}.fits'):
+                        os.remove(f'{output_path}/clipped_input/{j}.fits')
+                    partial_input_fits.write(f'{output_path}/clipped_input/{j}.fits', format='fits')
+
+                    del partial_input_fits
+
+                if save_output or save_input:
+
+                    prepare_dir(f'{output_path}/partition_position')
+                    if os.path.isfile(f'{output_path}/partition_position/{j}.pb'):
+                        os.remove(f'{output_path}/partition_position/{j}.pb')
+                    torch.save(partition_position, f'{output_path}/partition_position/{j}.pb')
+
+                    continue
 
                 mask = torch.round(nn.Sigmoid()(mask) + 0.5 - config['hyperparameters']['threshold'])
                 mask[mask > 1] = 1
 
-                # Convert to numpy for Sofia
-                partition_position = torch.tensor([[s.start + p for s, p in zip(slices, self.cnn_padding)],
-                                                   [s.stop - p for s, p in zip(slices, self.cnn_padding)]])
                 prediction = parametrise_sources(self.header, hi_cube_tensor.T, mask.T, partition_position,
                                                  min_intensity=config['hyperparameters']['min_intensity'],
                                                  max_intensity=config['hyperparameters']['max_intensity'])

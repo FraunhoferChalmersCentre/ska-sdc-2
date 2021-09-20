@@ -26,6 +26,7 @@ segmentation:
     freq: 32 # frequency axis
   augmentation: True # Use rotation and mirroring to augment more training data
   validation:
+    interval: 10
     split: 0.8 # Fraction of cube for training
     reduction: 0 # Fraction of validation set to use (if not enough memory)
   batch_size: 128 # Number of cubes in one training batch
@@ -33,7 +34,6 @@ segmentation:
     training_start: 0.5 # Fraction of sources at t
     training_end: 0.5 # Fraction after annealing, set equal to training_start for no annealing
     validation: 0.5 # Fraction of sources in validation, applicapable if robust_validation=False
-  robust_validation: True # True means run full pipeline for validation set, False do light-weight validation on cubes same size as in training
   anneal_interval: 10 # Update interval (#epochs) of batch source fraction. Larger means slower annealing.
 
 downstream:
@@ -73,6 +73,7 @@ characteristic_parameters:
 hyperparameters:
   threshold: 0.5 # Threshold for CNN output
   min_intensity: 10 # Minimum line flux integral to be included in catalogue
+  max_intensity: 276
 
 traversing:
   fits_file: null # The fits file to traverse

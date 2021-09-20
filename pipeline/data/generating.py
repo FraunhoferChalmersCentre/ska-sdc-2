@@ -72,7 +72,7 @@ def prepare_df(df: pd.DataFrame, hi_cube_file: str, coord_keys: List[str], cube_
     wcs = WCS(header)
 
     if config['segmentation']['filtering']['fraction']:
-        df = df.sort_values(by=config['segmentation']['filtering']['power_measure'], ignore_index=True, ascending=False)
+        df = df.sort_values(by=config['segmentation']['filtering']['power_measure'], ignore_index=False, ascending=False)
         df = df.head(int(config['segmentation']['filtering']['fraction'] * len(df)))
 
     df[coord_keys] = wcs.all_world2pix(df[['ra', 'dec', 'central_freq']], 0).astype(np.int32)
@@ -107,7 +107,7 @@ def prepare_df(df: pd.DataFrame, hi_cube_file: str, coord_keys: List[str], cube_
         df['{}0'.format(p)] = lower
         df['{}1'.format(p)] = upper
 
-    df = df.sort_values(by='f1', ignore_index=True)
+    df = df.sort_values(by='f1', ignore_index=False)
 
     return df
 
@@ -168,7 +168,7 @@ def append_source_attributes(data: dict, row: pd.Series, **kwargs):
             segmentmap_tensor = torch.tensor(kwargs['segmentmap'], dtype=torch.float32)
             data[attr].append(segmentmap_tensor)
         elif attr == 'allocated_voxels':
-            voxel_indices = torch.tensor(kwargs['allocation_dict'][row.id], dtype=torch.float32)
+            voxel_indices = torch.tensor(kwargs['allocated_voxels'], dtype=torch.float32)
             data[attr].append(voxel_indices - data['position'][-1][0])
         else:
             data[attr].append(torch.tensor(row[attr]))
@@ -192,6 +192,7 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
     n_noise_boxes = int(len(allocation_dict) * config['segmentation']['noise_per_source'])
 
     freq_size = get_hi_shape(hi_cube_file)[-1]
+    df['new_loc'] = np.arange(len(df))
 
     with tqdm(total=len(df)) as pbar:
         pbar.set_description('Sampling dataset')
@@ -209,10 +210,10 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
 
                 # Update channel spans
                 prev_max_f1 = max_f1
-                min_f0 = int(df['f0'].iloc[i:i + batch_fetches].min())
+                min_f0 = int(df['f0'].iloc[int(row.new_loc):int(row.new_loc) + batch_fetches].min())
                 min_f0 = min(min_f0, prev_max_f1)
 
-                max_f1 = int(df['f1'].iloc[i:i + batch_fetches].max())
+                max_f1 = int(df['f1'].iloc[int(row.new_loc):int(row.new_loc) + batch_fetches].max())
 
                 if max_f1 - prev_max_f1 < empty_cube_shape[-1]:
                     max_f1 = prev_max_f1 + empty_cube_shape[-1]
@@ -220,13 +221,13 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
 
                 cache_hi_cube(hi_cube_file, min_f0, max_f1)
 
-            if row.id in allocation_dict.keys():
+            if i in allocation_dict.keys():
                 batch_counter += 1
                 slices = tuple(
                     map(lambda p: slice(int(row['{}0'.format(p)]), int(row['{}1'.format(p)])), coord_keys))
                 sources_dict = append_common_attributes(sources_dict, hi_cube_file=hi_cube_file, slices=slices)
                 sources_dict = append_source_attributes(sources_dict, row, segmentmap=segmentmap[slices].todense(),
-                                                        allocation_dict=allocation_dict)
+                                                        allocated_voxels=allocation_dict[i])
 
         # Ensure scale is computed for all channels
 

@@ -29,3 +29,16 @@ class BaseSegmenter(pl.LightningModule):
 
     def forward(self, image, frequency_channels):
         return self.model(self._get_model_input(image, frequency_channels))
+
+class AbstractValidator:
+    def __init__(self, segmenter: BaseSegmenter):
+        self.segmenter = segmenter
+
+    def on_validation_start(self):
+        raise NotImplementedError
+
+    def validation_step(self, batch, batch_idx):
+        raise NotImplementedError
+
+    def validation_epoch_end(self, validation_step_outputs):
+        raise NotImplementedError
