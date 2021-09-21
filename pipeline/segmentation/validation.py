@@ -21,7 +21,8 @@ class SimpleValidator(AbstractValidator):
         self.surrogates = surrogates
 
     def on_validation_start(self):
-        return
+        for name, surrogate in self.surrogates.items():
+            surrogate.reset()
 
     def validation_step(self, batch, batch_idx):
         x, y = batch['image'], batch['segmentmap']
