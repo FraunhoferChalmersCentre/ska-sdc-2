@@ -14,7 +14,7 @@ from spectral_cube import SpectralCube
 
 from pipeline.data import splitting
 from pipeline.data.segmentmap import create_from_df, prepare_df
-from pipeline.data.ska_dataset import DummySKADataSet
+from pipeline.data.ska_dataset import DummySKADataSet, ValidationItemGetter
 from pipeline.segmentation.base import BaseSegmenter
 from pipeline.segmentation.metrics import IncrementalDice, IncrementalAverageMetric, IncrementalCombo
 from pipeline.segmentation.training import EquiBatchBootstrapSampler
