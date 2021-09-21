@@ -26,7 +26,7 @@ segmentation:
     freq: 32 # frequency axis
   augmentation: True # Use rotation and mirroring to augment more training data
   validation:
-    interval: 10
+    interval: 1
     split: 0.8 # Fraction of cube for training
     reduction: 0 # Fraction of validation set to use (if not enough memory)
   batch_size: 128 # Number of cubes in one training batch

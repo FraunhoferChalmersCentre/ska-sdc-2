@@ -25,11 +25,11 @@ class SimpleValidator(AbstractValidator):
 
     def validation_step(self, batch, batch_idx):
         x, y = batch['image'], batch['segmentmap']
-        f_channels = torch.empty((x.shape[0], 2), device=self.segmenter.device)
+        f_channels = torch.empty((x.shape[0], 2), device=x.device)
         for i in range(x.shape[0]):
             f_channels[i, 0] = batch['position'][i, 0, -1] + batch['slices'][i][0][-1]
             f_channels[i, 1] = batch['position'][i, 0, -1] + batch['slices'][i][1][-1]
-
+        self.segmenter.to(x.device)
         y_hat = self.segmenter(x, f_channels)
 
         return y_hat.cpu(), y.cpu()

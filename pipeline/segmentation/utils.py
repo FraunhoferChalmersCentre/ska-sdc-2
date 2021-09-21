@@ -96,7 +96,7 @@ def get_full_validator(segmenter: BaseSegmenter):
     return validator
 
 
-def get_data(only_validation=False, full_set_validation=False):
+def get_data(only_validation=False, full_set_validation=False, validation_item_getter=ValidationItemGetter()):
     size = config['segmentation']['size']
 
     split_point = int(get_hi_shape(filename.data.sky(size))[0] * .8)
@@ -104,7 +104,8 @@ def get_data(only_validation=False, full_set_validation=False):
     directory = filename.processed.dataset(size)
     dataset = filehandling.read_splitted_dataset(directory, limit_files=config['segmentation']['limit_files'])
 
-    training_set, simple_validation_set, split_point = splitting.train_val_split(dataset, split_point=split_point)
+    training_set, simple_validation_set, split_point = splitting.train_val_split(dataset, split_point=split_point,
+                                                                                 validation_item_getter=validation_item_getter)
 
     if full_set_validation:
         validation_set = DummySKADataSet()

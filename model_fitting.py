@@ -8,21 +8,24 @@ from astropy.io import fits
 import numpy as np
 
 from definitions import config, ROOT_DIR
+from pipeline.data.ska_dataset import TrainingItemGetter
 from pipeline.segmentation.training import TrainSegmenter
 from pipeline.common import filename
 from pipeline.segmentation.utils import get_data, get_checkpoint_callback, get_random_vis_id, get_base_segmenter, \
     get_equibatch_samplers, get_full_validator
+from pipeline.segmentation.validation import SimpleValidator
 
-training_set, validation_set = get_data(full_set_validation=True)
+training_set, validation_set = get_data(full_set_validation=False, validation_item_getter=TrainingItemGetter())
 base_segmenter = get_base_segmenter()
-validator = get_full_validator(base_segmenter)
+
+loss_fct = losses.JointLoss(losses.DiceLoss(mode='binary'), losses.SoftBCEWithLogitsLoss(), 1.0, 1.0)
+validator = SimpleValidator(base_segmenter, {'val_loss': loss_fct})
 checkpoint_callback = get_checkpoint_callback(period=config['segmentation']['validation']['interval'])
 
-train_sampler, val_sampler = get_equibatch_samplers(training_set, validation_set, only_training=True)
+train_sampler, val_sampler = get_equibatch_samplers(training_set, validation_set, only_training=False)
 
 segmenter = TrainSegmenter(base_segmenter,
-                           loss_fct=losses.JointLoss(losses.DiceLoss(mode='binary'),
-                                                     losses.SoftBCEWithLogitsLoss(), 1.0, 1.0),
+                           loss_fct=loss_fct,
                            training_set=training_set,
                            validation_set=validation_set,
                            header=fits.getheader(filename.data.sky(config['segmentation']['size'])),
