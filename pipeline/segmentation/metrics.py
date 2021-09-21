@@ -25,8 +25,8 @@ class IncrementalDice(IncrementalMetric):
         assert preds.shape == target.shape
         logits = torch.nn.Sigmoid()(preds)
 
-        self.nominator += torch.sum(logits * target)
-        self.denominator += torch.sum(logits) + torch.sum(target)
+        self.nominator += torch.sum(logits * target).to('cpu')
+        self.denominator += torch.sum(logits).to('cpu') + torch.sum(target).to('cpu')
 
     def compute(self):
         if self.denominator == torch.tensor(0.0):
@@ -42,7 +42,7 @@ class IncrementalAverageMetric(IncrementalMetric):
         self.add_state("numel", default=torch.tensor(0), dist_reduce_fx="sum")
 
     def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
-        self.cumulative_metric += self.metric_fct(preds, target) * torch.numel(preds)
+        self.cumulative_metric += self.metric_fct(preds, target).to('cpu') * torch.numel(preds)
         self.numel += torch.numel(preds)
 
     def compute(self):

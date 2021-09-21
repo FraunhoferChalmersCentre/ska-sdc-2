@@ -16,7 +16,7 @@ from pipeline.traversing.traverser import EvaluationTraverser
 
 
 class SimpleValidator(AbstractValidator):
-    def __init__(self, segmenter: BaseSegmenter, surrogates: Dict):
+    def __init__(self, segmenter: BaseSegmenter, surrogates: Dict[str, Metric]):
         super().__init__(segmenter)
         self.surrogates = surrogates
 
@@ -31,14 +31,14 @@ class SimpleValidator(AbstractValidator):
             f_channels[i, 1] = batch['position'][i, 0, -1] + batch['slices'][i][1][-1]
         self.segmenter.to(x.device)
         y_hat = self.segmenter(x, f_channels)
+        y = y.to(y_hat.device)
 
-        return y_hat.cpu(), y.cpu()
+        for name, surrogate in self.surrogates.items():
+            surrogate.update(y_hat, y)
+        return
 
     def validation_epoch_end(self, validation_step_outputs):
-        model_outs = torch.cat(tuple([p[0].reshape(-1) for p in validation_step_outputs])).reshape(1, 1, -1)
-        segmaps = torch.cat(tuple([p[1].reshape(-1) for p in validation_step_outputs])).reshape(1, 1, -1)
-
-        return {surrogate: f(model_outs, segmaps) for surrogate, f in self.surrogates.items()}
+        return {k: v.compute() for k, v in self.surrogates.items()}
 
 
 class SKAScoreValidator(AbstractValidator):
