@@ -61,3 +61,7 @@ class IncrementalCombo(IncrementalMetric):
     def compute(self):
         m = torch.tensor([m.compute() for m in self.metrics])
         return torch.sum(m)
+
+    def reset(self):
+        for m in self.metrics:
+            m.reset()
