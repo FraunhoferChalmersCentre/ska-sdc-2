@@ -158,7 +158,7 @@ def gaussian_convolution(small_dense_cube: np.ndarray, header: Header):
 
 
 def create_from_df(df: pd.DataFrame, header: Header, fill_value=1.):
-    df['fill_value'] = fill_value if fill_value is not None else df.index
+    df['fill_value'] = fill_value if fill_value is not None else df.index + 1
 
     full_cube_shape = (header['NAXIS1'], header['NAXIS2'], header['NAXIS3'])
 
@@ -173,13 +173,26 @@ def create_from_df(df: pd.DataFrame, header: Header, fill_value=1.):
 
     all_allocations = np.empty((df['n_allocations'].sum(), 4), dtype=np.int32)
 
+    df = df.sort_values(by='n_allocations', ignore_index=False, ascending=False)
+
+    c = 0
+    allocations = set()
     for i, row in tqdm(df.iterrows(), total=df.shape[0], desc='Creating segmentmap from catalogue'):
-        c = df.loc[:i]['n_allocations'][:-1].sum()
-        row_allocations = allocation_dict[i]
+        row_allocations = allocation_dict[i]#.tolist()
+        indices = np.ravel_multi_index(row_allocations.T, full_cube_shape)
+        include = [i not in allocations for i in indices]
+        row_allocations = row_allocations[include]
+
+        for i in indices[include]:
+            allocations.add(i)
+
         all_allocations[c:c + len(row_allocations), :3] = row_allocations
         all_allocations[c:c + len(row_allocations), 3] = row.fill_value
+        c += len(row_allocations)
 
-    return COO(all_allocations[:, :3].T, all_allocations[:, 3], shape=full_cube_shape), allocation_dict
+    all_allocations = all_allocations[:c]
+    coo = COO(all_allocations[:, :3].T.astype(np.int32), all_allocations[:, 3].astype(np.int32), shape=full_cube_shape)
+    return coo, allocation_dict
 
 
 def from_processed(file_type: str):

@@ -58,10 +58,13 @@ def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: spar
                 df_predicted.loc[i, f'{attr}_prediction'] = row[attr]
             try:
                 match = segmentmap[int(row.x_geo), int(row.y_geo), int(row.z_geo)]
-
-                matched, scores, predictions = score_source(df_true.loc[int(match)], df_predicted.loc[[i]])
-            except (IndexError, KeyError):
-                print('Index or key error')
+            except IndexError:
+                print('Index error')
+                match = -1
+            try:
+                matched, scores, predictions = score_source(df_true.loc[int(match) - 1], df_predicted.loc[[i]])
+            except KeyError:
+                print('Key error')
                 match = -1
             print(match)
             if match == 0:

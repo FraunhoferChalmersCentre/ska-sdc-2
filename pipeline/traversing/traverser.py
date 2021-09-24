@@ -209,7 +209,7 @@ class CubeCache:
         if self.gradual_loading:
             f0, f1 = slices[-1].start, slices[-1].stop
             self.hi_cube_tensor = torch.empty(tuple(map(lambda x: x.stop - x.start, slices)))
-            for i, f in enumerate(range(f0, f1)):
+            for i, f in enumerate(tqdm(range(f0, f1), desc='Loading input data')):
                 hi_data_fits = fits.getdata(self.fits_file, ignore_blank=True)
                 self.hi_cube_tensor[:, :, i] = torch.tensor(hi_data_fits[f].astype(np.float32),
                                                             dtype=torch.float32).T[slices[:2]]
