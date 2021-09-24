@@ -56,6 +56,8 @@ header = getheader(filename.data.test_sky())
 
 timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
 trials_log_file = ROOT_DIR + f'/hparam_logs/{timestamp}.pb'
+CNN_PADDING = np.array([16, 16, 16])
+SOFIA_PADDING = np.array([12, 12, 100])
 
 for i, alpha in enumerate(alphas):
     name = f'{checkpoint}/{alpha:.2f}'
@@ -66,7 +68,7 @@ for i, alpha in enumerate(alphas):
 
     tuner = PrecisionRecallTradeoffTuner(alpha, config['hyperparameters']['threshold'], init_values[0]['min_intensity'],
                                          init_values[0]['max_intensity'], sofia_params, test_set_path, header,
-                                         name=name)
+                                         CNN_PADDING, SOFIA_PADDING, name=name)
 
     best = fmin(tuner.produce_score, space, algo=tpe.suggest, max_evals=performed + int(np.round(n_trials)),
                 trials=trials, trials_save_file=trials_log_file)

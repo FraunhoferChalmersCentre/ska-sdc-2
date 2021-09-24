@@ -72,6 +72,7 @@ def get_allocations(row: pd.Series, full_cube_shape: Tuple):
         # Span of frequency bands of complete HI cube to be filled, relative to small cube
         channel_span = tuple(
             map(lambda s: np.round(row['z'] + s * row['n_channels'] / 2 - row['z_lower']).astype(np.int32), (-1, 1)))
+        channel_span = (max(channel_span[0], 0), min(channel_span[1], cube_shape[2] - 1))
 
         # Middle row of cross-section
         middle_row = (maximum_end + minimum_start) / 2
@@ -136,7 +137,7 @@ def get_spans(full_cube_shape: Tuple, image_coords: pd.DataFrame, half_length: T
         spans_df[f'{p_name}_lower'][(coords - half_length[i]) < 5] = 0
         spans_df[f'{p_name}_lower'][(coords - half_length[i]) >= 5] = np.floor(coords - half_length[i]) - 5
 
-        spans_df[f'{p_name}_upper'][coords + half_length[i] > full_cube_shape[i] - 5] = full_cube_shape[i]
+        spans_df[f'{p_name}_upper'][coords + half_length[i] > full_cube_shape[i] - 5] = full_cube_shape[i] - 1
         spans_df[f'{p_name}_upper'][coords + half_length[i] <= full_cube_shape[i] - 5] = np.ceil(
             coords + half_length[i]) + 5
 

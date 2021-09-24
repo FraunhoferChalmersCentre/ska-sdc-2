@@ -136,6 +136,11 @@ class EvaluationTraverser(ModelTraverser):
                         os.remove(f'{output_path}/partition_position/{j}.pb')
                     torch.save(partition_position, f'{output_path}/partition_position/{j}.pb')
 
+                    prepare_dir(f'{output_path}/slices')
+                    if os.path.isfile(f'{output_path}/slices/{j}.pb'):
+                        os.remove(f'{output_path}/slices/{j}.pb')
+                    pickle.dump(slices, open(f'{output_path}/slices/{j}.pb', 'wb'))
+
                     continue
 
                 mask = torch.round(nn.Sigmoid()(mask) + 0.5 - config['hyperparameters']['threshold'])

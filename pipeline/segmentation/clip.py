@@ -43,6 +43,7 @@ def _partition_indexing(cube_shape, dim, padding, max_batch_size=None):
                                      zip(effective_shape, cube_shape, padding)))
 
     meshes = np.meshgrid(*map(np.arange, patches_each_dim))
+    meshes = [meshes[0], meshes[2], meshes[1]]
     upper_lefts = np.stack(list(map(np.ravel, meshes)))
     n_evaluations = upper_lefts.shape[1]
     if max_batch_size is not None:

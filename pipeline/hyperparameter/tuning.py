@@ -1,3 +1,4 @@
+import pickle
 from datetime import datetime
 
 import glob
@@ -17,6 +18,7 @@ from tqdm import tqdm
 
 from pipeline.downstream import parametrise_sources
 from pipeline.segmentation.scoring import score_df
+from pipeline.traversing.traverser import remove_non_edge_padding
 
 
 def generate_single_cube_catalogue(input_cube: torch.tensor, header: Header, model_out: torch.tensor,
@@ -124,12 +126,15 @@ class SingleInputTuner(AbstractTuner):
 
 class MultiInputTuner(AbstractTuner):
     def __init__(self, threshold: float, min_intensity: float, max_intensity: float, sofia_parameters: dict,
-                 test_set_path: str, header: Header, name=None):
+                 test_set_path: str, header: Header, cnn_padding: np.ndarray, sofia_padding: np.ndarray, name=None):
         segmentmap = sparse.load_npz(f'{test_set_path}/segmentmap.npz')
         df_true = pd.read_csv(f'{test_set_path}/df.txt', sep=' ', index_col='id')
         super().__init__(threshold, min_intensity, max_intensity, sofia_parameters, segmentmap, df_true, name)
         self.test_set_path = test_set_path
         self.header = header
+        self.cube_shape = np.array(list(map(lambda x: header[x], ['NAXIS1', 'NAXIS2', 'NAXIS3'])))
+        self.cnn_padding = cnn_padding
+        self.sofia_padding = sofia_padding
 
     def create_catalogue(self) -> pd.DataFrame:
         n_model_outs = len(glob.glob(f'{self.test_set_path}/model_out/*.fits'))
@@ -140,8 +145,10 @@ class MultiInputTuner(AbstractTuner):
             model_out = torch.tensor(fits.getdata(f'{self.test_set_path}/model_out/{i}.fits').astype(np.float32),
                                      dtype=torch.float32)
             position = torch.load(f'{self.test_set_path}/partition_position/{i}.pb')
+            slices = pickle.load(open(f'{self.test_set_path}/slices/{i}.pb', 'rb'))
             df = generate_single_cube_catalogue(input_cube, self.header, model_out, self.sofia_parameters,
                                                 self.threshold, self.min_intensity, self.max_intensity, position)
+            df = remove_non_edge_padding(slices, self.cube_shape, self.cnn_padding, self.sofia_padding, df)
             catalogues.append(df)
             del input_cube, model_out
 
@@ -156,8 +163,9 @@ class MultiInputTuner(AbstractTuner):
 
 class SKAScoreTuner(MultiInputTuner):
     def __init__(self, threshold: float, min_intensity: float, max_intensity: float, sofia_parameters: dict,
-                 test_set_path: str, header: Header, name=None):
-        super().__init__(threshold, min_intensity, max_intensity, sofia_parameters, test_set_path, header, name)
+                 test_set_path: str, header: Header, cnn_padding: np.ndarray, sofia_padding: np.ndarray, name=None):
+        super().__init__(threshold, min_intensity, max_intensity, sofia_parameters, test_set_path, header, cnn_padding,
+                         sofia_padding, name)
 
     def score_strategy(self, score_metrics):
         return score_metrics['sdc2_score']
@@ -165,8 +173,9 @@ class SKAScoreTuner(MultiInputTuner):
 
 class PrecisionRecallTradeoffTuner(MultiInputTuner):
     def __init__(self, alpha, threshold: float, min_intensity: float, max_intensity: float, sofia_parameters: dict,
-                 test_set_path: str, header: Header, name=None):
-        super().__init__(threshold, min_intensity, max_intensity, sofia_parameters, test_set_path, header, name)
+                 test_set_path: str, header: Header, cnn_padding: np.ndarray, sofia_padding: np.ndarray, name=None):
+        super().__init__(threshold, min_intensity, max_intensity, sofia_parameters, test_set_path, header, cnn_padding,
+                         sofia_padding, name)
         self.alpha = alpha
 
     def score_strategy(self, score_metrics):

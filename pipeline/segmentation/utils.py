@@ -139,7 +139,7 @@ def get_checkpoint_callback(use_sdc2_score=False, period=1):
                                               period=period)
     else:
         checkpoint_callback = ModelCheckpoint(monitor='val_loss',
-                                              save_top_k=10,
+                                              save_top_k=3,
                                               dirpath=filename.models.directory,
                                               filename=config['segmentation']['model_name'] + '-' + str(
                                                   model_id) + '-{epoch:02d}-{val_loss:.2f}',
