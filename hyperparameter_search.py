@@ -56,6 +56,11 @@ SOFIA_PADDING = np.array([12, 12, 100])
 n_trials = 500
 performed = 0
 
+
+def early_stopping(result):
+    return result.results[-1]['status'] == STATUS_OK, {}
+
+
 for i in range(n_trials):
     alpha = np.random.random()
     name = f'{checkpoint}/{alpha:.2f}'
@@ -69,5 +74,5 @@ for i in range(n_trials):
                                          init_values[0]['max_intensity'], sofia_params, test_set_path, header,
                                          CNN_PADDING, SOFIA_PADDING, name=name)
 
-    best = fmin(tuner.produce_score, space, algo=tpe.suggest, max_evals=1 + int(np.round(n_trials)),
-                trials=trials, trials_save_file=trials_log_file)
+    best = fmin(tuner.produce_score, space, algo=tpe.suggest, max_evals=100 + len(trials.results),
+                trials=trials, trials_save_file=trials_log_file, early_stop_fn=early_stopping)

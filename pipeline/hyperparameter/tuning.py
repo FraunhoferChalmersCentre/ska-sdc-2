@@ -20,23 +20,9 @@ from tqdm import tqdm
 
 from definitions import config
 from pipeline.downstream import parametrise_sources
+from pipeline.hyperparameter.timeout import timeout
 from pipeline.segmentation.scoring import score_df
 from pipeline.traversing.traverser import remove_non_edge_padding
-
-
-def generate_single_cube_catalogue(queue: multiprocessing.Queue, input_cube: torch.tensor, header: Header, model_out: torch.tensor,
-                                   sofia_params: dict, mask_threshold: float, min_intensity: float,
-                                   max_intensity: float, position=None):
-    mask = torch.round(nn.Sigmoid()(model_out.to(torch.float32)) + 0.5 - mask_threshold).to(torch.float32)
-    mask[mask > 1] = 1
-
-    if position is None:
-        position = torch.zeros(2, 3)
-        position[1] = torch.tensor(input_cube.shape)
-    df_predicted = parametrise_sources(header, input_cube, mask, position, sofia_params, min_intensity=min_intensity,
-                                       max_intensity=max_intensity)
-
-    queue.put(df_predicted)
 
 
 def scale_value(value, interval=None):
@@ -82,22 +68,22 @@ class AbstractTuner:
         self.sofia_parameters['parameters']['dilatePixMax'] = int(np.round(args['dilation_max_spatial']))
         self.sofia_parameters['parameters']['dilateChanMax'] = int(np.round(args['dilation_max_freq']))
 
-    def generate_single_cube_catalogue_handler(self, input_cube: torch.tensor, header: Header, model_out: torch.tensor,
-                                               sofia_params: dict, mask_threshold: float, min_intensity: float,
-                                               max_intensity: float, position=None):
+    @timeout(config['hyperparameters']['catalogue_generation_timelimit'])
+    def generate_single_cube_catalogue(self, input_cube: torch.tensor, header: Header, model_out: torch.tensor,
+                                       sofia_params: dict, mask_threshold: float, min_intensity: float,
+                                       max_intensity: float, position=None):
 
-        queue = multiprocessing.Queue()
+        mask = torch.round(nn.Sigmoid()(model_out.to(torch.float32)) + 0.5 - mask_threshold).to(torch.float32)
+        mask[mask > 1] = 1
 
-        p = multiprocessing.Process(target=generate_single_cube_catalogue,
-                                    args=(queue, input_cube, header, model_out, sofia_params,
-                                          mask_threshold, min_intensity, max_intensity, position))
-        p.start()
-        p.join(config['hyperparameters']['catalogue_generation_timelimit'])
-        if p.is_alive():
-            p.terminate()
-            raise TimeoutError('Catalogue generation exceeded time limit')
+        if position is None:
+            position = torch.zeros(2, 3)
+            position[1] = torch.tensor(input_cube.shape)
+        df_predicted = parametrise_sources(header, input_cube, mask, position, sofia_params,
+                                           min_intensity=min_intensity,
+                                           max_intensity=max_intensity)
 
-        return queue.get()
+        return df_predicted
 
     def produce_score(self, args):
         self.iteration += 1
@@ -141,9 +127,9 @@ class SingleInputTuner(AbstractTuner):
         self.model_out = torch.tensor(model_out.astype(np.float32), dtype=torch.float32)
 
     def create_catalogue(self) -> pd.DataFrame:
-        return self.generate_single_cube_catalogue_handler(self.input_cube, self.header, self.model_out,
-                                                           self.sofia_parameters, self.threshold,
-                                                           self.min_intensity, self.max_intensity)
+        return self.generate_single_cube_catalogue(self.input_cube, self.header, self.model_out,
+                                                   self.sofia_parameters, self.threshold,
+                                                   self.min_intensity, self.max_intensity)
 
 
 class MultiInputTuner(AbstractTuner):
@@ -170,9 +156,9 @@ class MultiInputTuner(AbstractTuner):
             position = torch.load(f'{self.test_set_path}/partition_position/{i}.pb')
             slices = pickle.load(open(f'{self.test_set_path}/slices/{i}.pb', 'rb'))
 
-            df = self.generate_single_cube_catalogue_handler(input_cube, self.header, model_out, self.sofia_parameters,
-                                                             self.threshold, self.min_intensity, self.max_intensity,
-                                                             position)
+            df = self.generate_single_cube_catalogue(input_cube, self.header, model_out, self.sofia_parameters,
+                                                     self.threshold, self.min_intensity, self.max_intensity,
+                                                     position)
 
             df = remove_non_edge_padding(slices, self.cube_shape, self.cnn_padding, self.sofia_padding, df)
             catalogues.append(df)
