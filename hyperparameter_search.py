@@ -3,7 +3,7 @@ from datetime import datetime
 
 import numpy as np
 from astropy.io.fits import getheader
-from hyperopt import hp, fmin, tpe
+from hyperopt import hp, fmin, tpe, Trials, STATUS_OK
 from hyperopt.fmin import generate_trials_to_calculate
 from sofia import readoptions
 
@@ -17,12 +17,6 @@ test_set_path = filename.processed.test_dataset(checkpoint)
 
 sofia_params = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])
 
-alphas = np.linspace(0, 1, 100)
-
-n_trials = 10
-performed = 0
-factor = .99
-
 space = {'radius_spatial': hp.uniform('radius_spatial', .5, 5),
          'radius_freq': hp.uniform('radius_freq', .5, 100),
          'min_size_spatial': hp.uniform('min_size_spatial', .5, 5),
@@ -32,7 +26,7 @@ space = {'radius_spatial': hp.uniform('radius_spatial', .5, 5),
          'min_voxels': hp.uniform('min_voxels', 1, 300),
          'dilation_max_spatial': hp.uniform('dilation_max_spatial', .5, 5),
          'dilation_max_freq': hp.uniform('dilation_max_freq', .5, 20),
-         'mask_threshold': hp.uniform('mask_threshold', 1e-2, 1),
+         'mask_threshold': hp.uniform('mask_threshold', .5, 1),
          'min_intensity': hp.uniform('min_intensity', 0, 30),
          'max_intensity': hp.uniform('max_intensity', 200, 1000)
          }
@@ -59,18 +53,21 @@ trials_log_file = ROOT_DIR + f'/hparam_logs/{timestamp}.pb'
 CNN_PADDING = np.array([16, 16, 16])
 SOFIA_PADDING = np.array([12, 12, 100])
 
-for i, alpha in enumerate(alphas):
+n_trials = 500
+performed = 0
+
+for i in range(n_trials):
+    alpha = np.random.random()
     name = f'{checkpoint}/{alpha:.2f}'
 
     if len(trials.results) > 0:
         for r in trials.results:
-            r['loss'] = - (alpha * r['precision'] + (1 - alpha) * r['recall'])
+            if r['status'] == STATUS_OK and 'precision' in r.keys() and 'recall' in r.keys():
+                r['loss'] = - (alpha * r['precision'] + (1 - alpha) * r['recall'])
 
     tuner = PrecisionRecallTradeoffTuner(alpha, config['hyperparameters']['threshold'], init_values[0]['min_intensity'],
                                          init_values[0]['max_intensity'], sofia_params, test_set_path, header,
                                          CNN_PADDING, SOFIA_PADDING, name=name)
 
-    best = fmin(tuner.produce_score, space, algo=tpe.suggest, max_evals=performed + int(np.round(n_trials)),
+    best = fmin(tuner.produce_score, space, algo=tpe.suggest, max_evals=1 + int(np.round(n_trials)),
                 trials=trials, trials_save_file=trials_log_file)
-    performed += int(np.round(n_trials))
-    n_trials = n_trials * factor

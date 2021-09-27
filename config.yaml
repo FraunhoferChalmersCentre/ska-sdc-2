@@ -74,6 +74,7 @@ hyperparameters:
   threshold: 0.5 # Threshold for CNN output
   min_intensity: 10 # Minimum line flux integral to be included in catalogue
   max_intensity: 276
+  catalogue_generation_timelimit: 300
 
 traversing:
   fits_file: null # The fits file to traverse

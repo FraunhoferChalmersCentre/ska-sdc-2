@@ -61,25 +61,28 @@ def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: spar
             except IndexError:
                 print('Index error')
                 match = -1
-            try:
-                matched, scores, predictions = score_source(df_true.loc[int(match) - 1], df_predicted.loc[[i]])
-            except KeyError:
-                print('Key error')
-                match = -1
+
             print(match)
             if match == 0:
                 total_penalty += config['scoring']['fp_penalty']
                 df_predicted.loc[i, 'penalty'] = config['scoring']['fp_penalty']
             elif match > 0:
-                n_matched += 1
+                try:
+                    matched, scores, predictions = score_source(df_true.loc[int(match) - 1], df_predicted.loc[[i]])
+                except KeyError:
+                    print('Key error')
+                    match = -1
 
-                for attr in LINEAR_SCATTER_ATTRS + ANGLE_SCATTER_ATTRS:
-                    df_predicted.loc[i, f'{attr}_score'] = scores[attr]
-                    df_predicted.loc[i, f'{attr}_target'] = predictions[attr][1]
+                if match > 0:
+                    n_matched += 1
 
-                points = np.mean(list(scores.values()))
-                df_predicted.loc[i, 'total_points'] = points
-                total_points += points
+                    for attr in LINEAR_SCATTER_ATTRS + ANGLE_SCATTER_ATTRS:
+                        df_predicted.loc[i, f'{attr}_score'] = scores[attr]
+                        df_predicted.loc[i, f'{attr}_target'] = predictions[attr][1]
+
+                    points = np.mean(list(scores.values()))
+                    df_predicted.loc[i, 'total_points'] = points
+                    total_points += points
 
         metrics['precision'] = n_matched / len(df_predicted)
         metrics['recall'] = n_matched / len(df_true)
