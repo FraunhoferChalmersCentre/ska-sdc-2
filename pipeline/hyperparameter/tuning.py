@@ -164,13 +164,16 @@ class MultiInputTuner(AbstractTuner):
             catalogues.append(df)
             del input_cube, model_out
 
-        merged_catalogue = pd.concat(catalogues)
+        catalogues = [c for c in catalogues if len(c) > 0]
+        if len(catalogues) > 0:
+            merged_catalogue = pd.concat(catalogues)
 
-        wcs = WCS(self.header)
-        merged_catalogue[['x_geo', 'y_geo', 'z_geo']] = wcs.all_world2pix(
-            merged_catalogue[['ra', 'dec', 'central_freq']], 0)
+            wcs = WCS(self.header)
+            merged_catalogue[['x_geo', 'y_geo', 'z_geo']] = wcs.all_world2pix(
+                merged_catalogue[['ra', 'dec', 'central_freq']], 0)
 
-        return merged_catalogue
+            return merged_catalogue
+        return pd.DataFrame()
 
 
 class SKAScoreTuner(MultiInputTuner):

@@ -171,23 +171,35 @@ def create_from_df(df: pd.DataFrame, header: Header, fill_value=1.):
     df['n_allocations'] = [len(allocation_dict[i]) if i in allocation_dict.keys() else 0 for i, row in df.iterrows()]
     df = df[df['n_allocations'] > 0]
 
-    all_allocations = np.empty((df['n_allocations'].sum(), 4), dtype=np.int32)
+    all_allocations = np.empty((df['n_allocations'].sum(), 5), dtype=np.int32)
 
     df = df.sort_values(by='n_allocations', ignore_index=False, ascending=False)
 
     c = 0
-    allocations = set()
+    allocations = dict()
     for i, row in tqdm(df.iterrows(), total=df.shape[0], desc='Creating segmentmap from catalogue'):
-        row_allocations = allocation_dict[i]#.tolist()
+        row_allocations = allocation_dict[i]
         indices = np.ravel_multi_index(row_allocations.T, full_cube_shape)
-        include = [i not in allocations for i in indices]
-        row_allocations = row_allocations[include]
 
-        for i in indices[include]:
-            allocations.add(i)
+        if fill_value is None:
+            collision = np.array([i in allocations.keys() for i in indices])
+
+            for j in indices[collision]:
+                row_index = allocations[j]
+                collided_index = all_allocations[row_index, 4]
+                position = all_allocations[row_index, :3]
+                if np.linalg.norm(row[['x', 'y', 'z']] - position) < np.linalg.norm(
+                        df.loc[collided_index][['x', 'y', 'z']] - position):
+                    all_allocations[row_index, 3] = row.fill_value
+                    all_allocations[row_index, 4] = i
+
+            row_allocations = row_allocations[~collision]
+            for j, p in enumerate(indices[~collision]):
+                allocations[p] = c + j
 
         all_allocations[c:c + len(row_allocations), :3] = row_allocations
         all_allocations[c:c + len(row_allocations), 3] = row.fill_value
+        all_allocations[c:c + len(row_allocations), 4] = i
         c += len(row_allocations)
 
     all_allocations = all_allocations[:c]
