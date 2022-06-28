@@ -50,16 +50,17 @@ class EvaluationTraverser(ModelTraverser):
                  df_name: str = None):
         super().__init__(model)
         self.model_input_dim = model_input_dim
-        self.desired_dim = desired_dim
+        header = fits.getheader(fits_file, ignore_blank=True)
+        self.header = header
+        self.cube_shape = np.array(list(map(lambda x: header[x], ['NAXIS1', 'NAXIS2', 'NAXIS3'])))
+        self.desired_dim = np.minimum(desired_dim, self.cube_shape)
         self.cnn_padding = cnn_padding
         self.sofia_padding = sofia_padding
         self.n_parallel = n_parallel
         self.i_job = i_job
         self.j_loop = j_loop
         self.max_batch_size = max_batch_size
-        header = fits.getheader(fits_file, ignore_blank=True)
-        self.cube_shape = np.array(list(map(lambda x: header[x], ['NAXIS1', 'NAXIS2', 'NAXIS3'])))
-        self.header = header
+
         self.data_cache = CubeCache(fits_file)
         slices_partition = partition_expanding(self.cube_shape, desired_dim + 2 * cnn_padding,
                                                cnn_padding + sofia_padding)

@@ -4,6 +4,7 @@ from datetime import datetime
 import glob
 
 import multiprocessing
+from typing import Tuple, Optional, List
 
 import numpy as np
 import pandas as pd
@@ -48,7 +49,7 @@ class AbstractTuner:
     def score_strategy(self, score_metrics) -> float:
         raise NotImplementedError
 
-    def create_catalogue(self) -> pd.DataFrame:
+    def create_catalogue(self) -> Tuple[pd.DataFrame, Optional[np.ndarray]]:
         raise NotImplementedError
 
     def update_args(self, args):
@@ -68,6 +69,28 @@ class AbstractTuner:
         self.sofia_parameters['parameters']['dilatePixMax'] = int(np.round(args['dilation_max_spatial']))
         self.sofia_parameters['parameters']['dilateChanMax'] = int(np.round(args['dilation_max_freq']))
 
+    def compute_intersection(self, df, obj_mask):
+        intersections = []
+        for i, row in df.iterrows():
+            intersections.append({})
+            segmap_region = self.segmentmap[int(row.x_min_s):int(row.x_max_s),
+                            int(row.y_min_s):int(row.y_max_s),
+                            int(row.z_min_s):int(row.z_max_s)]
+            mask_region = obj_mask[int(row.x_min):int(row.x_max),
+                          int(row.y_min):int(row.y_max),
+                          int(row.z_min):int(row.z_max)]
+            mask_region = np.where(mask_region == row.id, 1, 0)
+            try:
+                intersected = mask_region[tuple(segmap_region.coords)] * segmap_region.data
+            except IndexError as e:
+                continue
+
+            matches, counts = np.unique(intersected, return_counts=True)
+            for m, c in zip(matches[matches != 0], counts[matches != 0]):
+                intersections[-1][m] = c
+
+        return np.array(intersections)
+
     @timeout(config['hyperparameters']['catalogue_generation_timelimit'])
     def generate_single_cube_catalogue(self, input_cube: torch.tensor, header: Header, model_out: torch.tensor,
                                        sofia_params: dict, mask_threshold: float, min_intensity: float,
@@ -79,11 +102,10 @@ class AbstractTuner:
         if position is None:
             position = torch.zeros(2, 3)
             position[1] = torch.tensor(input_cube.shape)
-        df_predicted = parametrise_sources(header, input_cube, mask, position, sofia_params,
-                                           min_intensity=min_intensity,
-                                           max_intensity=max_intensity)
-
-        return df_predicted
+        df_predicted, obj_mask = parametrise_sources(header, input_cube, mask, position, sofia_params,
+                                                     min_intensity=min_intensity, max_intensity=max_intensity,
+                                                     return_mask=True)
+        return df_predicted, obj_mask
 
     def produce_score(self, args):
         self.iteration += 1
@@ -97,9 +119,10 @@ class AbstractTuner:
 
             self.update_args(args)
 
-            df_predicted = self.create_catalogue()
+            df_predicted, intersections = self.create_catalogue()
 
-            metrics, df_predicted = score_df(df_predicted, self.df_true, self.segmentmap)
+            df_predicted = df_predicted.reset_index(drop=True)
+            metrics, df_predicted = score_df(df_predicted, self.df_true, intersections)
 
             for k, v in metrics.items():
                 writer.add_scalar(k, v)
@@ -126,7 +149,7 @@ class SingleInputTuner(AbstractTuner):
         self.input_cube = torch.tensor(input_cube.astype(np.float32), dtype=torch.float32)
         self.model_out = torch.tensor(model_out.astype(np.float32), dtype=torch.float32)
 
-    def create_catalogue(self) -> pd.DataFrame:
+    def create_catalogue(self, return_mask=False) -> pd.DataFrame:
         return self.generate_single_cube_catalogue(self.input_cube, self.header, self.model_out,
                                                    self.sofia_parameters, self.threshold,
                                                    self.min_intensity, self.max_intensity)
@@ -144,9 +167,10 @@ class MultiInputTuner(AbstractTuner):
         self.cnn_padding = cnn_padding
         self.sofia_padding = sofia_padding
 
-    def create_catalogue(self) -> pd.DataFrame:
+    def create_catalogue(self, return_mask=True) -> Tuple[pd.DataFrame, Optional[List]]:
         n_model_outs = len(glob.glob(f'{self.test_set_path}/model_out/*.fits'))
         catalogues = []
+        intersections = []
         for i in tqdm(range(n_model_outs)):
             input_cube = torch.tensor(
                 fits.getdata(f'{self.test_set_path}/clipped_input/{i}.fits').astype(np.float32),
@@ -156,11 +180,15 @@ class MultiInputTuner(AbstractTuner):
             position = torch.load(f'{self.test_set_path}/partition_position/{i}.pb')
             slices = pickle.load(open(f'{self.test_set_path}/slices/{i}.pb', 'rb'))
 
-            df = self.generate_single_cube_catalogue(input_cube, self.header, model_out, self.sofia_parameters,
-                                                     self.threshold, self.min_intensity, self.max_intensity,
-                                                     position)
+            df, mask = self.generate_single_cube_catalogue(input_cube, self.header, model_out,
+                                                                    self.sofia_parameters,
+                                                                    self.threshold, self.min_intensity,
+                                                                    self.max_intensity,
+                                                                    position)
 
             df = remove_non_edge_padding(slices, self.cube_shape, self.cnn_padding, self.sofia_padding, df)
+            intersections.extend(self.compute_intersection(df, mask.T))
+
             catalogues.append(df)
             del input_cube, model_out
 
@@ -172,8 +200,8 @@ class MultiInputTuner(AbstractTuner):
             merged_catalogue[['x_geo', 'y_geo', 'z_geo']] = wcs.all_world2pix(
                 merged_catalogue[['ra', 'dec', 'central_freq']], 0)
 
-            return merged_catalogue
-        return pd.DataFrame()
+            return merged_catalogue, intersections
+        return pd.DataFrame(), None
 
 
 class SKAScoreTuner(MultiInputTuner):

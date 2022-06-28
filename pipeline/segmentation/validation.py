@@ -32,7 +32,7 @@ class SimpleValidator(AbstractValidator):
             f_channels[i, 1] = batch['position'][i, 0, -1] + batch['slices'][i][1][-1]
         self.segmenter.to(x.device)
         y_hat = self.segmenter(x, f_channels)
-        y = y.to(y_hat.device)
+        y = y.to_dense().to(y_hat.device)
 
         for name, surrogate in self.surrogates.items():
             surrogate.update(y_hat, y)

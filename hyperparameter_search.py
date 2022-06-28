@@ -22,13 +22,13 @@ space = {'radius_spatial': hp.uniform('radius_spatial', .5, 5),
          'min_size_spatial': hp.uniform('min_size_spatial', .5, 5),
          'min_size_freq': hp.uniform('min_size_freq', 1, 50),
          'max_size_spatial': hp.uniform('max_size_spatial', 5, 30),
-         'max_size_freq': hp.uniform('max_size_freq', 50, 300),
+         'max_size_freq': hp.uniform('max_size_freq', 50, 400),
          'min_voxels': hp.uniform('min_voxels', 1, 300),
          'dilation_max_spatial': hp.uniform('dilation_max_spatial', .5, 5),
          'dilation_max_freq': hp.uniform('dilation_max_freq', .5, 20),
-         'mask_threshold': hp.uniform('mask_threshold', .5, 1),
-         'min_intensity': hp.uniform('min_intensity', 0, 30),
-         'max_intensity': hp.uniform('max_intensity', 200, 1000)
+         'mask_threshold': hp.uniform('mask_threshold', 0, 1),
+         'min_intensity': hp.uniform('min_intensity', 0, 50),
+         'max_intensity': hp.uniform('max_intensity', 10000, 10001)
          }
 
 init_values = [{'radius_spatial': 1,
@@ -36,16 +36,16 @@ init_values = [{'radius_spatial': 1,
                 'min_size_spatial': 1,
                 'min_size_freq': 1,
                 'max_size_spatial': 30,
-                'max_size_freq': 300,
+                'max_size_freq': 400,
                 'min_voxels': 1,
                 'dilation_max_spatial': sofia_params['parameters']['dilatePixMax'],
                 'dilation_max_freq': sofia_params['parameters']['dilateChanMax'],
                 'mask_threshold': 1e-2,
                 'min_intensity': 0,
-                'max_intensity': 100
+                'max_intensity': 100000
                 }]
 
-trials = generate_trials_to_calculate(init_values)
+trials = Trials()#generate_trials_to_calculate(init_values)
 header = getheader(filename.data.test_sky())
 
 timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
@@ -53,7 +53,7 @@ trials_log_file = ROOT_DIR + f'/hparam_logs/{timestamp}.pb'
 CNN_PADDING = np.array([16, 16, 16])
 SOFIA_PADDING = np.array([12, 12, 100])
 
-n_trials = 500
+n_trials = 100000
 performed = 0
 
 
@@ -62,7 +62,9 @@ def early_stopping(result):
 
 
 for i in range(n_trials):
+
     alpha = np.random.random()
+    print(i, 'ALPHA', alpha)
     name = f'{checkpoint}/{alpha:.2f}'
 
     if len(trials.results) > 0:

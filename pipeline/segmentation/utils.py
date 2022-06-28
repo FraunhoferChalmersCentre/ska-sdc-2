@@ -13,8 +13,8 @@ from pytorch_toolbelt import losses
 from spectral_cube import SpectralCube
 
 from pipeline.data import splitting
-from pipeline.data.segmentmap import create_from_df, prepare_df
-from pipeline.data.ska_dataset import DummySKADataSet, ValidationItemGetter
+from pipeline.data.segmentmap import create_from_df, prepare_df, full_cylinder_vz
+from pipeline.data.ska_dataset import DummySKADataSet, ValidationItemGetter, AbstractSKADataset
 from pipeline.segmentation.base import BaseSegmenter
 from pipeline.segmentation.metrics import IncrementalDice, IncrementalAverageMetric, IncrementalCombo
 from pipeline.segmentation.training import EquiBatchBootstrapSampler
@@ -59,15 +59,22 @@ def generate_validation_input_cube(val_dataset_path):
         return shape, header
 
 
-def generate_validation_segmentmap(val_dataset_path, header, df):
+def generate_validation_segmentmap(val_dataset_path, header, df, regenerate=False):
     segmap_name = val_dataset_path + '/segmentmap.npz'
-    if not os.path.isfile(segmap_name):
-        df = prepare_df(df, header, do_filter=False, extended_radius=config['scoring']['extended_radius'])
-        segmentmap, _ = create_from_df(df, header, fill_value=None)
+    if regenerate or not os.path.isfile(segmap_name):
+        df = prepare_df(df, header, do_filter=False)
+        segmentmap, allocation_dict = create_from_df(df, header, padding=config['scoring']['extended_radius'],
+                                                     fill_value=None)
         sparse.save_npz(segmap_name, segmentmap)
+
+        with open(val_dataset_path + '/allocation_dict.pb', 'wb') as f:
+            pickle.dump(allocation_dict, f)
     else:
         segmentmap = sparse.load_npz(segmap_name)
-    return segmentmap
+        with open(val_dataset_path + '/allocation_dict.pb', 'rb') as f:
+            allocation_dict = pickle.load(f)
+
+    return segmentmap, allocation_dict
 
 
 def get_full_validator(segmenter: BaseSegmenter):
@@ -127,6 +134,13 @@ def get_model():
     return model
 
 
+def get_checkpoint_resume():
+    if config['traversing']['checkpoint'] is None:
+        return None
+
+    return ROOT_DIR + '/saved_models/' + config['traversing']['checkpoint']
+
+
 def get_checkpoint_callback(use_sdc2_score=False, period=1):
     model_id = filename.models.new_id()
     if use_sdc2_score:
@@ -154,25 +168,24 @@ def get_state_dict(file):
     return state_dict
 
 
-def get_random_vis_id(dataset, min_allocated=300, random_state=np.random.RandomState()):
-    vis_id = None
+def get_random_vis_id(dataset: AbstractSKADataset, min_percentile=99.9, random_state=np.random.RandomState()):
     shape = get_hi_shape(filename.data.sky(config['segmentation']['size']))
 
-    pos = dataset.get_attribute('position')
-    alloc = dataset.get_attribute('allocated_voxels')
-    while vis_id is None:
-        random_id = random_state.randint(0, dataset.get_attribute('index'))
+    pos = dataset.get_attribute_data('position')
+    alloc = dataset.get_attribute_data('allocated_voxels')
+    n_alloc = np.array([0 if torch.isnan(a).any() else len(a) for a in alloc])
+    allowed_indices = np.arange(dataset.get_attribute_data('index'))
+    indices = allowed_indices[np.percentile(n_alloc[allowed_indices], min_percentile) <= n_alloc[allowed_indices]]
+    random_state.shuffle(indices)
+    for candidate_id in indices:
         candidate = True
-        for r in pos[random_id].squeeze():
-
+        for r in pos[candidate_id].squeeze():
             for c, s in zip(r, shape):
                 if torch.eq(c, 0) or torch.eq(c, s):
                     candidate = False
 
-        if candidate and alloc[random_id].shape[0] > min_allocated:
-            vis_id = random_id
-
-    return vis_id
+        if candidate:
+            return candidate_id
 
 
 def get_statistics():
@@ -203,7 +216,7 @@ def get_equibatch_samplers(training_set, validation_set, only_training=True, epo
     train_noise_bs = config['segmentation']['batch_size'] - train_source_bs_end
     train_source_bs_start = int(
         config['segmentation']['batch_size'] * config['segmentation']['source_fraction']['training_start'])
-    train_sampler = EquiBatchBootstrapSampler(training_set.get_attribute('index'), len(training_set),
+    train_sampler = EquiBatchBootstrapSampler(training_set.get_attribute_data('index'), len(training_set),
                                               train_source_bs, train_noise_bs, source_bs_start=train_source_bs_start,
                                               intensities=intensities,
                                               n_samples=epoch_merge * len(training_set),
@@ -215,8 +228,8 @@ def get_equibatch_samplers(training_set, validation_set, only_training=True, epo
         val_source_bs = int(
             config['segmentation']['batch_size'] * config['segmentation']['source_fraction']['validation'])
         val_noise_bs = config['segmentation']['batch_size'] - train_source_bs
-        val_intensities = np.array([np.prod(a.shape) for a in validation_set.get_attribute('image')])
-        val_sampler = EquiBatchBootstrapSampler(validation_set.get_attribute('index'), len(validation_set),
+        val_intensities = np.array([np.prod(a.shape) for a in validation_set.get_attribute_data('image')])
+        val_sampler = EquiBatchBootstrapSampler(validation_set.get_attribute_data('index'), len(validation_set),
                                                 val_source_bs, val_noise_bs, source_bs_start=None,
                                                 intensities=val_intensities,
                                                 n_samples=epoch_merge * len(validation_set),

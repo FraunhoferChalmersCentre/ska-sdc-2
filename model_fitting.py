@@ -13,7 +13,7 @@ from pipeline.segmentation.metrics import IncrementalCombo, IncrementalDice, Inc
 from pipeline.segmentation.training import TrainSegmenter
 from pipeline.common import filename
 from pipeline.segmentation.utils import get_data, get_checkpoint_callback, get_random_vis_id, get_base_segmenter, \
-    get_equibatch_samplers, get_full_validator
+    get_equibatch_samplers, get_full_validator, get_checkpoint_resume
 from pipeline.segmentation.validation import SimpleValidator
 
 training_set, validation_set = get_data(full_set_validation=False, validation_item_getter=TrainingItemGetter())
@@ -49,6 +49,7 @@ logger = TensorBoardLogger("tb_logs",
                            version=datetime.now().strftime("%Y/%m/%d %H:%M:%S")
                            )
 trainer = pl.Trainer(max_epochs=100000, gpus=1, logger=logger, callbacks=[checkpoint_callback],
-                     check_val_every_n_epoch=config['segmentation']['validation']['interval'])
+                     check_val_every_n_epoch=config['segmentation']['validation']['interval'],
+                     resume_from_checkpoint=get_checkpoint_resume())
 
 trainer.fit(segmenter)

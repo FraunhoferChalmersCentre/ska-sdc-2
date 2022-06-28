@@ -35,15 +35,15 @@ def score_source(true_df: pd.DataFrame, matched_prediction_df: pd.DataFrame):
     return len(matched_prediction_df), scores, predictions
 
 
-def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: sparse.COO):
+def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, intersections: np.ndarray):
     total_points = 0
-
-    n_matched = 0
 
     total_penalty = 0
 
     df_predicted['points'] = 0
     df_predicted['penalty'] = 0
+    df_predicted['match'] = 0
+    df_predicted['iou'] = 0
 
     metrics = {}
 
@@ -53,39 +53,41 @@ def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: spar
         df_predicted[f'{attr}_target'] = 0
 
     if len(df_predicted) > 0:
+
         for i, row in df_predicted.iterrows():
             for attr in LINEAR_SCATTER_ATTRS + ANGLE_SCATTER_ATTRS:
                 df_predicted.loc[i, f'{attr}_prediction'] = row[attr]
-            try:
-                match = segmentmap[int(row.x_geo), int(row.y_geo), int(row.z_geo)]
-            except IndexError:
-                print('Index error')
-                match = -1
+            match = 0
+            max_iou = 0
+            for k, v in intersections[i].items():
+                iou = v / (df_true.loc[k - 1, 'n_allocations'] + row.mask_size - v)
+                if max_iou < iou:
+                    max_iou = iou
+                    match = k
+            df_predicted.loc[i, 'iou'] = max_iou
+            print(match, max_iou)
+            if 0 < match:
+                print(df_true.loc[match - 1, 'n_allocations'], row.mask_size, intersections[i][match])
+            print('-------')
 
-            print(match)
             if match == 0:
                 total_penalty += config['scoring']['fp_penalty']
                 df_predicted.loc[i, 'penalty'] = config['scoring']['fp_penalty']
             elif match > 0:
-                try:
-                    matched, scores, predictions = score_source(df_true.loc[int(match) - 1], df_predicted.loc[[i]])
-                except KeyError:
-                    print('Key error')
-                    match = -1
+                matched, scores, predictions = score_source(df_true.loc[int(match) - 1], df_predicted.loc[[i]])
 
-                if match > 0:
-                    n_matched += 1
+                for attr in LINEAR_SCATTER_ATTRS + ANGLE_SCATTER_ATTRS:
+                    df_predicted.loc[i, f'{attr}_score'] = scores[attr]
+                    df_predicted.loc[i, f'{attr}_target'] = predictions[attr][1]
 
-                    for attr in LINEAR_SCATTER_ATTRS + ANGLE_SCATTER_ATTRS:
-                        df_predicted.loc[i, f'{attr}_score'] = scores[attr]
-                        df_predicted.loc[i, f'{attr}_target'] = predictions[attr][1]
+                points = np.mean(list(scores.values()))
+                df_predicted.loc[i, 'total_points'] = points
+                df_predicted.loc[i, 'match'] = int(match) - 1
+                total_points += points
 
-                    points = np.mean(list(scores.values()))
-                    df_predicted.loc[i, 'total_points'] = points
-                    total_points += points
-
-        metrics['precision'] = n_matched / len(df_predicted)
-        metrics['recall'] = n_matched / len(df_true)
+        metrics['precision'] = np.sum(config['scoring']['detection_threshold'] <= df_predicted.iou) / len(df_predicted)
+        metrics['recall'] = len(
+            np.unique(df_predicted[config['scoring']['detection_threshold'] <= df_predicted.iou].match)) / len(df_true)
         if metrics['precision'] + metrics['recall'] > 0:
             metrics['f1'] = 2 * (metrics['precision'] * metrics['recall']) / (metrics['precision'] + metrics['recall'])
         else:
@@ -96,7 +98,7 @@ def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: spar
             metrics[f'sdc2_score/{attr}'] = attrs_scores.mean()
 
         metrics['detected'] = len(df_predicted)
-        metrics['matched'] = n_matched
+        metrics['matched'] = np.sum(config['scoring']['detection_threshold'] <= df_predicted.iou)
         metrics['sdc2_penalty'] = total_penalty
         metrics['sdc2_points'] = total_points
         metrics['sdc2_score'] = total_points - total_penalty

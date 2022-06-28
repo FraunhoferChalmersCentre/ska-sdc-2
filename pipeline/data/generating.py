@@ -1,5 +1,6 @@
 from itertools import starmap
 from typing import List
+import copy
 
 import numpy as np
 import pandas as pd
@@ -165,8 +166,7 @@ def append_common_attributes(data: dict, **kwargs):
 def append_source_attributes(data: dict, row: pd.Series, **kwargs):
     for attr in SOURCE_ATTRIBUTES:
         if attr == 'segmentmap':
-            segmentmap_tensor = torch.tensor(kwargs['segmentmap'], dtype=torch.float32)
-            data[attr].append(segmentmap_tensor)
+            data[attr].append(kwargs['segmentmap'])
         elif attr == 'allocated_voxels':
             voxel_indices = torch.tensor(kwargs['allocated_voxels'], dtype=torch.float32)
             data[attr].append(voxel_indices - data['position'][-1][0])
@@ -226,7 +226,7 @@ def add_boxes(sources_dict: dict, empty_dict: dict, df: pd.DataFrame, hi_cube_fi
                 slices = tuple(
                     map(lambda p: slice(int(row['{}0'.format(p)]), int(row['{}1'.format(p)])), coord_keys))
                 sources_dict = append_common_attributes(sources_dict, hi_cube_file=hi_cube_file, slices=slices)
-                sources_dict = append_source_attributes(sources_dict, row, segmentmap=segmentmap[slices].todense(),
+                sources_dict = append_source_attributes(sources_dict, row, segmentmap=segmentmap[slices],
                                                         allocated_voxels=allocation_dict[i])
 
         # Ensure scale is computed for all channels
@@ -298,7 +298,7 @@ def split_by_size(df: pd.DataFrame, hi_cube_file: str, segmentmap: sparse.COO, a
 
         for i in range(len(source_dict[k])):
             item = source_dict[k].pop(-1)
-            splitted_source_dicts[i % len(splitted_source_dicts)][k].append(item.clone())
+            splitted_source_dicts[i % len(splitted_source_dicts)][k].append(copy.deepcopy(item))
 
     for source_split in splitted_source_dicts:
         source_split['index'] = len(source_split['image'])

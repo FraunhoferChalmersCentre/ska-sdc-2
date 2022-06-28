@@ -19,15 +19,17 @@ df = pd.read_csv(filename.data.test_true(), sep=' ', index_col='id')
 
 header = getheader(fits_file)
 
-segmentmap = generate_validation_segmentmap(test_dataset_path, header, df.copy())
+segmentmap, allocation_dict = generate_validation_segmentmap(test_dataset_path, header, df.copy(), regenerate=True)
 
 df_true = prepare_df(df, header)
+df_true = df_true.assign(
+    n_allocations=[len(allocation_dict[i]) if i in allocation_dict.keys() else 0 for i in df_true.index])
 df_true.to_csv(f'{test_dataset_path}/df.txt', sep=' ', index_label='id')
 
 # EvaluationTraverser
-model_input_dim = np.array([128, 128, 128])
-cnn_padding = np.array([8, 8, 8])
-desired_dim = np.array([2, 2, 20]) * (model_input_dim - 2 * cnn_padding)
+model_input_dim = np.array([128, 128, 256])
+cnn_padding = np.array([16, 16, 16])
+desired_dim = np.array([2, 4, 10]) * (model_input_dim - 2 * cnn_padding)
 
 sofia_padding = np.array([12, 12, 100])
 

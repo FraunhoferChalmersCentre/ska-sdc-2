@@ -22,9 +22,9 @@ from pipeline.data.ska_dataset import AbstractSKADataset
 
 class SortedSampler(Sampler):
     def __init__(self, dataset: AbstractSKADataset):
-        allocations = list(starmap(lambda i, t: (i, len(t)), enumerate(dataset.get_attribute('allocated_voxels')[:-1])))
+        allocations = list(starmap(lambda i, t: (i, len(t)), enumerate(dataset.get_attribute_data('allocated_voxels')[:-1])))
         self.sorted_indices = list(map(lambda i: i[0], sorted(allocations, key=lambda a: a[1], reverse=True))) + list(
-            range(dataset.get_attribute('index'), len(dataset)))
+            range(dataset.get_attribute_data('index'), len(dataset)))
 
     def __len__(self):
         return len(self.sorted_indices)
@@ -159,26 +159,27 @@ class TrainSegmenter(BaseSegmenter):
         self.log_prediction_image()
 
     def log_image(self):
-        image = self.training_set.get_attribute('image')[self.vis_id].squeeze()
+        image = self.training_set.get_attribute_data('image')[self.vis_id].squeeze()
         slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d), int(s / 2 - d) + 2 * d),
-                               zip(image.shape, self.training_set.get_attribute('dim'))))
+                               zip(image.shape, self.training_set.get_attribute_data('dim'))))
         normed_img = (image[slices] - image[slices].min()) / (image[slices].max() - image[slices].min())
-        self._log_cross_sections(normed_img, self.training_set[self.vis_id]['pa'], 'image')
-        segmap = self.training_set.get_attribute('segmentmap')[self.vis_id].squeeze()
+        self._log_cross_sections(normed_img, self.training_set.get_attribute_data('pa')[self.vis_id], 'image')
+        segmap = self.training_set.get_attribute_data('segmentmap')[self.vis_id].todense()
         if segmap.sum() == 0:
             raise ValueError('Logged segmentmap contains no source voxels. Reshuffle!')
 
-        self._log_cross_sections(segmap[slices], self.training_set[self.vis_id]['pa'], 'segmentmap')
+        self._log_cross_sections(torch.tensor(segmap[slices]), self.training_set.get_attribute_data('pa')[self.vis_id],
+                                 'target')
 
     def log_prediction_image(self):
-        image = self.training_set.get_attribute('image')[self.vis_id].squeeze()
-        position = self.training_set.get_attribute('position')[self.vis_id]
+        image = self.training_set.get_attribute_data('image')[self.vis_id].squeeze()
+        position = self.training_set.get_attribute_data('position')[self.vis_id]
         slices = tuple(starmap(lambda s, d: slice(int(s / 2 - d), int(s / 2 - d) + 2 * d),
-                               zip(image.shape, self.training_set.get_attribute('dim'))))
+                               zip(image.shape, self.training_set.get_attribute_data('dim'))))
         input_image = image[slices].to(self.device).view(1, 1, *image[slices].shape)
         f_channels = torch.tensor([[position[0, -1] + slices[-1].start, position[0, -1] + slices[-1].stop]])
         prediction = nn.Sigmoid()(self(input_image, f_channels)).squeeze()
-        self._log_cross_sections(prediction, self.training_set[self.vis_id]['pa'], 'Prediction')
+        self._log_cross_sections(prediction, self.training_set.get_attribute_data('pa')[self.vis_id], 'Prediction')
 
     def _log_cross_sections(self, cube: torch.Tensor, pa: float, tag: str):
         for i in range(self.vis_rotations):
@@ -195,7 +196,7 @@ class TrainSegmenter(BaseSegmenter):
     def training_step(self, batch, batch_idx):
         # training_step defined the train loop.
         # It is independent of forward
-        x, y = batch['image'], batch['segmentmap']
+        x, y = batch['image'], batch['segmentmap'].to_dense()
 
         self.log('galaxy_fraction', torch.sum(y) / torch.prod(torch.tensor(y.shape)), on_epoch=True, on_step=False)
 

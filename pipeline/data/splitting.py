@@ -8,10 +8,12 @@ from pipeline.data.ska_dataset import SKADataSet, StaticSKATransformationDecorat
 from pipeline.data.generating import COMMON_ATTRIBUTES, SOURCE_ATTRIBUTES, GLOBAL_ATTRIBUTES
 
 
-def to_float(tensors: List[torch.Tensor]): return list(map(lambda t: t.float(), tensors))
+def to_float(tensors: List[torch.Tensor]): return list(
+    map(lambda t: t.float() if isinstance(t, torch.Tensor) else t, tensors))
 
 
-def unsqueeze(tensors: List[torch.Tensor]): return list(map(lambda t: t.unsqueeze(0), tensors))
+def unsqueeze(tensors: List[torch.Tensor]): return list(
+    map(lambda t: t.unsqueeze(0) if isinstance(t, torch.Tensor) else t, tensors))
 
 
 def fill_dict(units: np.ndarray, dataset: Dict[str, np.ndarray], required_attrs: List[str]):
