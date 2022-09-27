@@ -6,11 +6,11 @@ path:
   models: ./saved_models/
 
 data:
-  splitsize: 60 # Cubes to include in a single data set file (.pt)
+  splitsize: 1000 # Cubes to include in a single data set file (.pt)
   memory_batches: 20 # Number of splits read into memory when creating data set, smaller number takes more memory
 
 segmentation:
-  size: dev_s # dev_ or dev_l
+  size: dev_l # dev_s or dev_l
   limit_files: null # Specify to use a subset of data set, e.g., use only limit_files *.pt files
   model_name: resnet34 # Models verified compatible are resnet18, resnet34, resnet50, resnet101 & resnet152
   filtering:
@@ -20,20 +20,20 @@ segmentation:
   target:
     smoothing_fwhm: 0 # FWHM in arcsec of Gaussian for smoothing segmap. 7 according to data description, 0 = no smoothing.
     min_value: .1 # Minimum voxel value in final segmentmap used for segmentation
-    padding: 1 # Padding around minor axis as relative length of major axis. 0 is X-shape segmentmap, 1 means full cylinder
+    padding: 1 # Padding in target masks
   cube_size: # Cube size for training, should not be smaller than 32 in any dimension
     spatial: 32 # x and y axis
     freq: 32 # frequency axis
   augmentation: True # Use rotation and mirroring to augment more training data
   validation:
+    interval: 1
     split: 0.8 # Fraction of cube for training
     reduction: 0 # Fraction of validation set to use (if not enough memory)
   batch_size: 128 # Number of cubes in one training batch
   source_fraction: # Fraction of sources in a training batch
-    training_start: 0.5 # Fraction of sources at t
-    training_end: 0.5 # Fraction after annealing, set equal to training_start for no annealing
-    validation: 0.5 # Fraction of sources in validation, applicapable if robust_validation=False
-  robust_validation: True # True means run full pipeline for validation set, False do light-weight validation on cubes same size as in training
+    training_start: 0.2 # Fraction of galaxu subcubes at start
+    training_end: 0.2 # Fraction after annealing, set equal to training_start for no annealing
+    validation: 0.2 # Fraction of sources in validation, applicable if robust_validation=False
   anneal_interval: 10 # Update interval (#epochs) of batch source fraction. Larger means slower annealing.
 
 downstream:
@@ -50,7 +50,8 @@ constants:
 
 scoring:
   fp_penalty: 1
-  extended_radius: 6
+  extended_radius: 1
+  detection_threshold: 0.35
   threshold:
     'pos': .3
     'hi_size': .3
@@ -73,8 +74,10 @@ characteristic_parameters:
 hyperparameters:
   threshold: 0.5 # Threshold for CNN output
   min_intensity: 10 # Minimum line flux integral to be included in catalogue
+  max_intensity: 276
+  catalogue_generation_timelimit: 300
 
 traversing:
   fits_file: null # The fits file to traverse
-  checkpoint: resnet18-0-epoch=479-adjusted_point_epoch=39.22.ckpt # Model to use
-  gpu_memory_max: 7000 # Specifiy hardware capacity
+  checkpoint: resnet34-0-epoch=346-val_loss=0.79.ckpt # Model to use
+  gpu_memory_max: 7000 # Specify hardware capacity

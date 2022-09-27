@@ -1,15 +1,14 @@
 import os
-from itertools import starmap
 from typing import Tuple
 import pickle
 
 import pandas as pd
-from sparse import DOK, save_npz, load_npz
+from sparse import COO, save_npz, load_npz
 from astropy.io.fits.header import Header
 from astropy.io import fits
 from astropy.wcs import WCS
 import numpy as np
-from skimage import draw, transform, filters
+from skimage import draw
 from tqdm import tqdm
 
 from pipeline.common import filename
@@ -21,6 +20,7 @@ ALPHA = .2
 segmap_config = config['segmentation']['target']
 
 PADDING = 5
+EPS = 1e-10
 
 
 def prepare_df(df: pd.DataFrame, header: Header, do_filter=True, extended_radius=0):
@@ -32,156 +32,166 @@ def prepare_df(df: pd.DataFrame, header: Header, do_filter=True, extended_radius
 
     pixel_width_arcsec = abs(header['CDELT1']) * 3600
     df['major_radius_pixels'] = df['hi_size'] / (pixel_width_arcsec * 2) + extended_radius
-    ratio = np.sqrt((np.cos(np.deg2rad(df.i)) ** 2) * (1 - ALPHA ** 2) + ALPHA ** 2)
-    df['minor_radius_pixels'] = ratio * df['major_radius_pixels']
+    df['minor_radius_pixels'] = df['major_radius_pixels'] * np.sqrt(
+        np.cos(np.deg2rad(df['i'])) ** 2 + (ALPHA ** 2) * np.sin(np.deg2rad(df['i'])) ** 2)
 
     if do_filter and config['segmentation']['filtering']['fraction']:
-        df = df.sort_values(by=config['segmentation']['filtering']['power_measure'], ignore_index=True, ascending=False)
+        df = df.sort_values(by=config['segmentation']['filtering']['power_measure'], ignore_index=False,
+                            ascending=False)
         df = df.head(int(config['segmentation']['filtering']['fraction'] * len(df)))
+
+    half_lengths = (df.major_radius_pixels, df.major_radius_pixels, df.n_channels / 2)
+
+    full_cube_shape = (header['NAXIS1'], header['NAXIS2'], header['NAXIS3'])
+    spans = get_spans(full_cube_shape, df[['x', 'y', 'z']], half_lengths)
+    df = df.join(spans)
+
+    for i, p in enumerate(['x', 'y', 'z']):
+        df = df[(df[f'{p}_upper'] > 0) & (df[f'{p}_lower'] < full_cube_shape[i])]
 
     return df
 
 
-def dense_cube(row: pd.Series, spans: Tuple, fill_value=1.):
-    cube_shape = tuple(map(lambda s: int(s[1] - s[0]), spans))
-    cross_section = np.zeros(cube_shape[:2], dtype=np.float32)
+def get_vz_range(x, y, p, row):
+    p2 = p ** 2
+    d = np.linalg.norm(np.stack((y, x)), axis=0)
+    d2 = np.square(d)
 
-    # Compute center of galaxy in small cube, with Python pixel convention
-    center = tuple(starmap(lambda p, s: p - s[0] - .5, zip(row[['x', 'y']], spans[:2])))
+    s = np.zeros(len(x))
+    s[p < d] = np.sqrt(d2[p < d] - p2)
 
-    # axes = map(np.ceil, row[['major_radius_pixels', 'minor_radius_pixels']])
-    axes = row[['major_radius_pixels', 'minor_radius_pixels']]
+    xb = s * x - p * y
+    yb = s * y + p * x
+
+    xf = s * x + p * y
+    yf = s * y - p * x
+
+    def shift(xs, ys): return xs / np.linalg.norm(np.stack((xs, ys / np.cos(row.i))), axis=0)
+
+    def backward_shift(cond): return shift(xb[cond], yb[cond])
+
+    def forward_shift(cond): return shift(xf[cond], yf[cond])
+
+    lower = np.zeros(len(x))
+
+    pe = p + EPS
+
+    lower[(x < pe) & (y < 0)] = forward_shift((x < pe) & (y < 0))
+    lower[(x < pe) & (0 <= y)] = backward_shift((x < pe) & (0 <= y))
+    lower[pe <= x] = (x[pe <= x] - p) / row.major_radius_pixels
+    lower[(d < pe) | ((x < 0) & (np.abs(y) < pe))] = -1
+
+    upper = np.zeros(len(x))
+    upper[x < -pe] = (x[x < -pe] + p) / row.major_radius_pixels
+    upper[(-pe <= x) & (y < 0)] = backward_shift((-pe <= x) & (y < 0))
+    upper[(-pe <= x) & (0 <= y)] = forward_shift((-pe <= x) & (0 <= y))
+    upper[(d < pe) | ((0 <= x) & (np.abs(y) < pe))] = 1
+
+    return lower, upper
+
+
+def full_cylinder_vz(x, y, p, row):
+    return np.repeat(-1, len(x)), np.repeat(1, len(y))
+
+
+def get_allocations(row: pd.Series, full_cube_shape: Tuple, padding=0, vz_range_method=get_vz_range):
+    axes = row[['major_radius_pixels', 'minor_radius_pixels']].values.astype(np.float32)
+    rotation_angle = np.deg2rad(row.pa - 90)
+    if np.pi < rotation_angle:
+        rotation_angle = rotation_angle - 2 * np.pi
     # Draw cross-section with base ellipse
-    rows, cols = draw.ellipse(*center, *axes, shape=cube_shape[:2])
-    if len(rows) == 0:
-        return None
-    cross_section[rows, cols] = fill_value
+    local_xs, local_ys = draw.ellipse(0, 0, axes[0] + 1 + padding, axes[1] + axes[1] / axes[0] + padding,
+                                      rotation=rotation_angle)
+    allocations = []
+    if len(local_ys) > 0:
+        rot_xs = np.cos(-rotation_angle) * local_xs - np.sin(-rotation_angle) * local_ys
+        rot_ys = np.sin(-rotation_angle) * local_xs + np.cos(-rotation_angle) * local_ys
+        lower, upper = vz_range_method(rot_xs, rot_ys, padding, row)
 
-    # Get span of rows in cross-section containing the ellipse
-    minimum_start, maximum_end = rows.min(), rows.max() + 1
+        xs = np.round(row.x + local_xs).astype(np.int32)
+        ys = np.round(row.y + local_ys).astype(np.int32)
 
-    # Span of frequency bands of complete HI cube to be filled, relative to small cube
-    channel_span = tuple(
-        map(lambda s: np.round(row['z'] + s * row['n_channels'] / 2 - spans[-1][0]).astype(np.int32), (-1, 1)))
+        pos, indices = np.unique(np.stack((xs, ys)), axis=1, return_index=True)
+        lower_channel = np.round(row.z + row.n_channels * lower / 2).astype(np.int32)
+        upper_channel = np.round(row.z + row.n_channels * upper / 2).astype(np.int32)
+        for x, y, l, u in zip(xs[indices], ys[indices], lower_channel[indices], upper_channel[indices]):
+            zs = np.arange(l, u + 1)
+            allocations.extend([[x, y, z] for z in zs.astype(np.int32)])
 
-    # Middle row of cross-section
-    middle_row = (maximum_end + minimum_start) / 2
-
-    # Middle channel, relative to small cube
-    middle_channel = (channel_span[1] + channel_span[0]) / 2
-
-    cube = np.zeros(cube_shape, dtype=np.float32)
-
-    half_width = (maximum_end - minimum_start) / 2
-
-    # Increase of cross-sections rows per frequency channel
-    n_rows_per_channel = (maximum_end - minimum_start) / (channel_span[1] - channel_span[0])
-
-    for c in range(*channel_span):
-        if maximum_end - minimum_start == 1:
-            # Galaxy occupies only a single frequency band
-            start = minimum_start
-            end = maximum_end
-        elif c < middle_channel:
-            # For frequency bands of the approaching side of the galaxy
-            i = c - channel_span[0]
-            start = minimum_start + i * n_rows_per_channel - segmap_config['padding'] * half_width
-            end = middle_row + segmap_config['padding'] * half_width
-        else:
-            # For frequency bands of the receding side of the galaxy
-            i = c - middle_channel
-            start = middle_row - segmap_config['padding'] * half_width
-            end = middle_row + i * n_rows_per_channel + segmap_config['padding'] * half_width
-
-        start = max(start, minimum_start)
-        start = np.floor(start).astype(np.int32)
-
-        end = max(end, start + 1)
-        end = min(end, maximum_end)
-        end = np.ceil(end).astype(np.int32)
-
-        cube[start:end, :, c] = cross_section[start:end]
-        cube[:, :, c] = transform.rotate(cube[:, :, c], angle=row.pa - 90, center=center, order=0)
-
-    cube = np.round(cube)
-    return cube
+    allocations = np.array(allocations)
+    if len(allocations) > 0:
+        for i in range(allocations.shape[1]):
+            allocations = allocations[(allocations[:, i] > 0) & (allocations[:, i] < full_cube_shape[i])]
+    return allocations
 
 
-def get_spans(full_cube_shape: Tuple, image_coords: pd.Series, half_length: Tuple):
-    spans = []
+def get_spans(full_cube_shape: Tuple, image_coords: pd.DataFrame, half_length: Tuple):
+    columns = [f'{p}_lower' for p in image_coords.columns] + [f'{p}_upper' for p in image_coords.columns]
+    spans_df = pd.DataFrame(index=image_coords.index, columns=columns)
 
-    for p, full_length, half_length in zip(image_coords, full_cube_shape, half_length):
-        if p - half_length < - 5:
-            dim_span_lower = 0
-        else:
-            dim_span_lower = np.floor(p - half_length) - 5
+    for i in range(len(image_coords.columns)):
+        p_name = image_coords.columns[i]
+        coords = image_coords[p_name]
 
-        if p + half_length > full_length + 5:
-            dim_span_upper = full_length
-        else:
-            dim_span_upper = np.ceil(p + half_length) + 5
+        spans_df[f'{p_name}_lower'][(coords - half_length[i]) < 5] = 0
+        spans_df[f'{p_name}_lower'][(coords - half_length[i]) >= 5] = np.floor(coords - half_length[i]) - 5
 
-        spans.append((int(dim_span_lower), int(dim_span_upper)))
-    return spans
+        spans_df[f'{p_name}_upper'][coords + half_length[i] > full_cube_shape[i] - 5] = full_cube_shape[i] - 1
+        spans_df[f'{p_name}_upper'][coords + half_length[i] <= full_cube_shape[i] - 5] = np.ceil(
+            coords + half_length[i]) + 5
 
-
-def gaussian_convolution(small_dense_cube: np.ndarray, header: Header):
-    fwhm_arcsec = segmap_config['smoothing_fwhm']
-    if fwhm_arcsec == 0.:
-        return small_dense_cube
-    fwhm_pixel = fwhm_arcsec / (abs(header['CDELT1']) * 3600)
-    sigma = fwhm_pixel / (2 * np.sqrt(2 * np.log(2)))
-    small_dense_cube = filters.gaussian(small_dense_cube, sigma=sigma)
-    small_dense_cube -= small_dense_cube.min()
-    small_dense_cube /= small_dense_cube.max()
-    small_dense_cube[small_dense_cube < segmap_config['min_value']] = 0.
-    return small_dense_cube
+    return spans_df
 
 
-def create_from_df(df: pd.DataFrame, header: Header, fill_value=1.):
+def create_from_df(df: pd.DataFrame, header: Header, fill_value=1., padding=0, vz_range_method=get_vz_range):
+    df['fill_value'] = fill_value if fill_value is not None else df.index + 1
+
     full_cube_shape = (header['NAXIS1'], header['NAXIS2'], header['NAXIS3'])
-    cube = DOK(full_cube_shape, dtype=np.float32)
 
-    allocation_dict = dict()
+    allocation_dict = {}
+    for i, row in tqdm(df.iterrows(), total=df.shape[0], desc='Compute allocations'):
+        row_allocations = get_allocations(row, full_cube_shape, padding, vz_range_method)
+        if len(row_allocations) > 0:
+            allocation_dict[i] = row_allocations
 
-    for i, row in tqdm(df.iterrows(), total=df.shape[0], desc='Creating segmentmap from catalogue'):
-        half_lengths = (row.major_radius_pixels, row.major_radius_pixels, row.n_channels / 2)
-        spans = get_spans(full_cube_shape, row[['x', 'y', 'z']], half_lengths)
+    df['n_allocations'] = [len(allocation_dict[i]) if i in allocation_dict.keys() else 0 for i, row in df.iterrows()]
 
-        add_to_segmap = True
-        for j, s in enumerate(spans):
-            if s[1] < 0 or s[0] > full_cube_shape[j]:
-                add_to_segmap = False
-                break
-        if not add_to_segmap:
-            continue
+    all_allocations = np.empty((int(df['n_allocations'].sum()), 5), dtype=np.int32)
 
-        fill_value_this = fill_value if fill_value is not None else i
-        small_dense_cube = dense_cube(row, spans, fill_value_this)
+    df = df.sort_values(by='n_allocations', ignore_index=False, ascending=False)
 
-        if small_dense_cube is None or small_dense_cube.sum() == 0:
-            continue
+    c = 0
+    allocations = dict()
+    for i, row in tqdm(df[0 < df.n_allocations].iterrows(), total=sum(0 < df.n_allocations),
+                       desc='Creating segmentmap from catalogue'):
 
-        cube_allocations = np.argwhere(small_dense_cube == fill_value_this).astype(np.int32)
+        row_allocations = allocation_dict[i]
+        indices = np.ravel_multi_index(row_allocations.T, full_cube_shape)
 
-        min_pos = np.fromiter(map(lambda s: s[0], spans), dtype=np.int32)
+        if fill_value is None:
+            collision = np.array([i in allocations.keys() for i in indices])
 
-        allocations = []
+            for j in indices[collision]:
+                row_index = allocations[j]
+                collided_index = all_allocations[row_index, 4]
+                position = all_allocations[row_index, :3]
+                if np.linalg.norm(row[['x', 'y', 'z']] - position) < np.linalg.norm(
+                        df.loc[collided_index][['x', 'y', 'z']] - position):
+                    all_allocations[row_index, 3] = row.fill_value
+                    all_allocations[row_index, 4] = i
 
-        for c in cube_allocations:
-            full_cube_pos = c + min_pos
-            ignore = False
-            for pos, shape in zip(full_cube_pos, full_cube_shape):
-                if pos < 0 or pos >= shape:
-                    ignore = True
+            row_allocations = row_allocations[~collision]
+            for j, p in enumerate(indices[~collision]):
+                allocations[p] = c + j
 
-            if not ignore:
-                cube[tuple(full_cube_pos)] = small_dense_cube[tuple(c)]
-                allocations.append(full_cube_pos)
+        all_allocations[c:c + len(row_allocations), :3] = row_allocations
+        all_allocations[c:c + len(row_allocations), 3] = row.fill_value
+        all_allocations[c:c + len(row_allocations), 4] = i
+        c += len(row_allocations)
 
-        allocation_dict[row.id] = np.array(allocations)
-
-    return cube.to_coo(), allocation_dict
+    all_allocations = all_allocations[:c]
+    coo = COO(all_allocations[:, :3].T.astype(np.int32), all_allocations[:, 3].astype(np.int32), shape=full_cube_shape)
+    return coo, allocation_dict
 
 
 def from_processed(file_type: str):
@@ -210,16 +220,16 @@ def save_to_processed(file_type, cube, allocation_dict):
         pickle.dump(allocation_dict, f)
 
 
-def create_from_files(file_type: str, regenerate=False, save_to_disk=True):
+def create_from_files(file_type: str, regenerate=False, save_to_disk=True, padding=0):
     cube, allocation_dict = None, None
     if not regenerate:
         cube, allocation_dict = from_processed(file_type)
     if cube is None or allocation_dict is None:
         logger.info('Computing segmentmap from truth catalogue...')
-        df = pd.read_csv(filename.data.true(file_type), sep=' ')
+        df = pd.read_csv(filename.data.true(file_type), sep=' ', index_col='id')
         header = fits.getheader(filename.data.sky(file_type), ignore_blank=True)
         df = prepare_df(df, header)
-        cube, allocation_dict = create_from_df(df, header)
+        cube, allocation_dict = create_from_df(df, header, padding=padding)
         if save_to_disk:
             save_to_processed(file_type, cube, allocation_dict)
 

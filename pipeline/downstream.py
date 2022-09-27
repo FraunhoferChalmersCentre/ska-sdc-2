@@ -3,7 +3,7 @@ from typing import Dict
 import numpy as np
 from astropy.wcs import WCS
 from numpy.linalg import LinAlgError
-from sofia import linker, parametrisation, readoptions
+from sofia import linker, parametrisation, readoptions, functions
 import pandas as pd
 from sklearn.decomposition import IncrementalPCA
 
@@ -138,6 +138,7 @@ def estimate_object_properties(cube: np.array, mask: np.array, dilated_mask: np.
     df['ell_min'] = np.nan
     df['ell_pa'] = np.nan
     df['est_flux'] = np.nan
+    df['mask_size'] = np.nan
     for i, obj in df.iterrows():
         obj_bounds = tuple([slice(int(max(obj[p + '_min'] - 1, 0)), int(min(obj[p + '_max'] + 1, cube.shape[i])))
                             for i, p in enumerate(['z', 'y', 'x'])])
@@ -145,6 +146,7 @@ def estimate_object_properties(cube: np.array, mask: np.array, dilated_mask: np.
         object_dilated_mask = np.where(dilated_mask[obj_bounds] == obj.id, 1., 0.)
         object_mask = np.where(mask[obj_bounds] == obj.id, 1., 0.)
 
+        df.loc[i, 'mask_size'] = object_mask.sum()
         df.loc[i, 'est_flux'] = (cube[obj_bounds] * object_dilated_mask).sum()
 
         angle = estimate_angle(object_mask)
@@ -206,6 +208,10 @@ def compute_challenge_metrics(df, header, position, padding):
 
         shift = np.array([pos + pad for pos, pad in zip(position[0], padding)])
 
+        for m in ['min', 'max']:
+            for i, p in enumerate(['x', 'y', 'z']):
+                df[f'{p}_{m}_s'] = df[f'{p}_{m}'] + shift[i]
+
         df.loc[:, ['ra', 'dec', 'central_freq']] = wcs.all_pix2world(
             np.array(df[['x_geo', 'y_geo', 'z_geo']] + shift, dtype=np.float32), 0)
 
@@ -241,7 +247,7 @@ def filter_df(df: pd.DataFrame):
 
 
 def parametrise_sources(header, input_cube, mask, position, parameters: Dict = None, padding=None, min_intensity=0,
-                        max_intensity=np.inf):
+                        max_intensity=np.inf, return_mask=False):
     if parameters is None:
         parameters = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])
     if mask.sum() == 0.:
@@ -260,5 +266,8 @@ def parametrise_sources(header, input_cube, mask, position, parameters: Dict = N
     df = compute_challenge_metrics(df, header, position, padding)
 
     df = df[(df['line_flux_integral'] > min_intensity) & (df['line_flux_integral'] < max_intensity)]
+
+    if return_mask:
+        return df, obj_mask
 
     return df

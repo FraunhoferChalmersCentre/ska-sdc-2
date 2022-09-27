@@ -36,3 +36,4 @@ mbatch = max_batch_size(segmenter.model, model_input_dim, config['traversing']['
 
 evaluator = EvaluationTraverser(segmenter, fits_file, model_input_dim, desired_dim, cnn_padding,
                                 sofia_padding, mbatch, n_parallel=1, i_job=0)
+df = evaluator.traverse()

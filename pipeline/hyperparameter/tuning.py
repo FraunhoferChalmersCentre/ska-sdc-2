@@ -1,85 +1,229 @@
+import pickle
 from datetime import datetime
+
+import glob
+
+import multiprocessing
+from typing import Tuple, Optional, List
 
 import numpy as np
 import pandas as pd
+import sparse
 import torch
+from astropy.io import fits
 from astropy.io.fits import Header
+from astropy.wcs import WCS
+from hyperopt import STATUS_OK, STATUS_FAIL
 from sparse import COO
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
+from definitions import config
 from pipeline.downstream import parametrise_sources
+from pipeline.hyperparameter.timeout import timeout
 from pipeline.segmentation.scoring import score_df
-
-iteration = 0
-
-
-def create_predicted_catalogue(input_cube: torch.tensor, header: Header, model_out: torch.tensor, sofia_params: dict,
-                               mask_threshold: float, min_intensity: float, max_intensity: float):
-    mask = torch.round(nn.Sigmoid()(model_out.to(torch.float32)) + 0.5 - mask_threshold).to(torch.float32)
-    mask[mask > 1] = 1
-
-    position = torch.zeros(2, 3)
-    position[1] = torch.tensor(input_cube.shape)
-    df_predicted = parametrise_sources(header, input_cube, mask, position, sofia_params, min_intensity=min_intensity,
-                                       max_intensity=max_intensity)
-
-    return df_predicted
+from pipeline.traversing.traverser import remove_non_edge_padding
 
 
-class Tuner:
-    def __init__(self, threshold: float, sofia_parameters: dict, input_cube: np.ndarray, header: Header,
-                 model_out: np.ndarray, segmap: COO, df: pd.DataFrame, name=None):
+def scale_value(value, interval=None):
+    if interval:
+        return (value - interval[0]) / (interval[1] - interval[0])
+    else:
+        return value
 
+
+class AbstractTuner:
+    def __init__(self, threshold: float, min_intensity: float, max_intensity: float, sofia_parameters: dict,
+                 segmentmap: COO, df_true: pd.DataFrame, name: str = None):
+
+        self.df_true = df_true
+        self.segmentmap = segmentmap
+        self.max_intensity = max_intensity
+        self.min_intensity = min_intensity
         self.name = name
-        self.header = header
-        self.df_true = df
-        self.segmentmap = segmap
-        self.input_cube = torch.tensor(input_cube.astype(np.float32), dtype=torch.float32)
-        self.model_out = torch.tensor(model_out.astype(np.float32), dtype=torch.float32)
         self.sofia_parameters = sofia_parameters
         self.threshold = threshold
         self.iteration = 0
 
-    def tuning_objective(self, args):
+    def score_strategy(self, score_metrics) -> float:
+        raise NotImplementedError
+
+    def create_catalogue(self) -> Tuple[pd.DataFrame, Optional[np.ndarray]]:
+        raise NotImplementedError
+
+    def update_args(self, args):
+        self.threshold = args['mask_threshold']
+        self.min_intensity = args['min_intensity']
+        self.max_intensity = args['max_intensity']
+        self.sofia_parameters['merge']['radiusX'] = int(np.round(args['radius_spatial']))
+        self.sofia_parameters['merge']['radiusY'] = int(np.round(args['radius_spatial']))
+        self.sofia_parameters['merge']['radiusZ'] = int(np.round(args['radius_freq']))
+        self.sofia_parameters['merge']['minSizeX'] = int(np.round(args['min_size_spatial']))
+        self.sofia_parameters['merge']['minSizeY'] = int(np.round(args['min_size_spatial']))
+        self.sofia_parameters['merge']['minSizeZ'] = int(np.round(args['min_size_freq']))
+        self.sofia_parameters['merge']['maxSizeX'] = int(np.round(args['max_size_spatial']))
+        self.sofia_parameters['merge']['maxSizeY'] = int(np.round(args['max_size_spatial']))
+        self.sofia_parameters['merge']['maxSizeZ'] = int(np.round(args['max_size_freq']))
+        self.sofia_parameters['merge']['minVoxels'] = int(np.round(args['min_voxels']))
+        self.sofia_parameters['parameters']['dilatePixMax'] = int(np.round(args['dilation_max_spatial']))
+        self.sofia_parameters['parameters']['dilateChanMax'] = int(np.round(args['dilation_max_freq']))
+
+    def compute_intersection(self, df, obj_mask):
+        intersections = []
+        for i, row in df.iterrows():
+            intersections.append({})
+            segmap_region = self.segmentmap[int(row.x_min_s):int(row.x_max_s),
+                            int(row.y_min_s):int(row.y_max_s),
+                            int(row.z_min_s):int(row.z_max_s)]
+            mask_region = obj_mask[int(row.x_min):int(row.x_max),
+                          int(row.y_min):int(row.y_max),
+                          int(row.z_min):int(row.z_max)]
+            mask_region = np.where(mask_region == row.id, 1, 0)
+            try:
+                intersected = mask_region[tuple(segmap_region.coords)] * segmap_region.data
+            except IndexError as e:
+                continue
+
+            matches, counts = np.unique(intersected, return_counts=True)
+            for m, c in zip(matches[matches != 0], counts[matches != 0]):
+                intersections[-1][m] = c
+
+        return np.array(intersections)
+
+    @timeout(config['hyperparameters']['catalogue_generation_timelimit'])
+    def generate_single_cube_catalogue(self, input_cube: torch.tensor, header: Header, model_out: torch.tensor,
+                                       sofia_params: dict, mask_threshold: float, min_intensity: float,
+                                       max_intensity: float, position=None):
+
+        mask = torch.round(nn.Sigmoid()(model_out.to(torch.float32)) + 0.5 - mask_threshold).to(torch.float32)
+        mask[mask > 1] = 1
+
+        if position is None:
+            position = torch.zeros(2, 3)
+            position[1] = torch.tensor(input_cube.shape)
+        df_predicted, obj_mask = parametrise_sources(header, input_cube, mask, position, sofia_params,
+                                                     min_intensity=min_intensity, max_intensity=max_intensity,
+                                                     return_mask=True)
+        return df_predicted, obj_mask
+
+    def produce_score(self, args):
         self.iteration += 1
         try:
-            with open("notebooks/hyperparams.txt", "a+") as file_object:
-                file_object.write(str(self.iteration) + '\t' + str(args) + '\n')
-
             version = str(self.iteration) + datetime.now().strftime("_%Y%m%d_%H%M%S")
 
             writer = SummaryWriter(log_dir='hparam_logs/' + self.name + '/' + version)
 
-            self.threshold = args['mask_threshold']
-            self.sofia_parameters['merge']['radiusX'] = int(np.round(args['radius_spatial']))
-            self.sofia_parameters['merge']['radiusY'] = int(np.round(args['radius_spatial']))
-            self.sofia_parameters['merge']['radiusZ'] = int(np.round(args['radius_freq']))
-            self.sofia_parameters['merge']['minSizeX'] = int(np.round(args['min_size_spatial']))
-            self.sofia_parameters['merge']['minSizeY'] = int(np.round(args['min_size_spatial']))
-            self.sofia_parameters['merge']['minSizeZ'] = int(np.round(args['min_size_freq']))
-            self.sofia_parameters['merge']['maxSizeX'] = int(np.round(args['max_size_spatial']))
-            self.sofia_parameters['merge']['maxSizeY'] = int(np.round(args['max_size_spatial']))
-            self.sofia_parameters['merge']['maxSizeZ'] = int(np.round(args['max_size_freq']))
-            self.sofia_parameters['merge']['minVoxels'] = int(np.round(args['min_voxels']))
-            self.sofia_parameters['parameters']['dilatePixMax'] = int(np.round(args['dilation_max_spatial']))
-            self.sofia_parameters['parameters']['dilateChanMax'] = int(np.round(args['dilation_max_freq']))
-
             for k, v in args.items():
                 writer.add_scalar('hparams/' + k, v)
 
-            df_predicted = create_predicted_catalogue(self.input_cube, self.header, self.model_out,
-                                                      self.sofia_parameters, self.threshold,
-                                                      args['min_intensity'], args['max_intensity'])
+            self.update_args(args)
 
-            metrics = score_df(df_predicted, self.df_true, self.segmentmap.todense(), sub_directory=self.name)
+            df_predicted, intersections = self.create_catalogue()
+
+            df_predicted = df_predicted.reset_index(drop=True)
+            metrics, df_predicted = score_df(df_predicted, self.df_true, intersections)
 
             for k, v in metrics.items():
                 writer.add_scalar(k, v)
 
             writer.flush()
 
-            return - metrics['score']
+            return {'loss': - self.score_strategy(metrics), 'status': STATUS_OK,
+                    'sofia_params': self.sofia_parameters,
+                    'df': df_predicted.to_dict(), **metrics}
         except Exception as err:
-            print(err)
-            return float('inf')
+            print('ERROR', err)
+            return {'status': STATUS_FAIL, 'sofia_params': self.sofia_parameters}
+
+
+class SingleInputTuner(AbstractTuner):
+    def __init__(self, threshold: float, min_intensity: float, max_intensity: float, sofia_parameters: dict,
+                 segmentmap: COO, df_true: pd.DataFrame, input_cube: np.ndarray, header: Header,
+                 model_out: np.ndarray,
+                 name=None):
+        super().__init__(threshold, min_intensity, max_intensity, sofia_parameters, segmentmap, df_true, name)
+        self.header = header
+        self.df_true = df_true
+        self.segmentmap = segmentmap
+        self.input_cube = torch.tensor(input_cube.astype(np.float32), dtype=torch.float32)
+        self.model_out = torch.tensor(model_out.astype(np.float32), dtype=torch.float32)
+
+    def create_catalogue(self, return_mask=False) -> pd.DataFrame:
+        return self.generate_single_cube_catalogue(self.input_cube, self.header, self.model_out,
+                                                   self.sofia_parameters, self.threshold,
+                                                   self.min_intensity, self.max_intensity)
+
+
+class MultiInputTuner(AbstractTuner):
+    def __init__(self, threshold: float, min_intensity: float, max_intensity: float, sofia_parameters: dict,
+                 test_set_path: str, header: Header, cnn_padding: np.ndarray, sofia_padding: np.ndarray, name=None):
+        segmentmap = sparse.load_npz(f'{test_set_path}/segmentmap.npz')
+        df_true = pd.read_csv(f'{test_set_path}/df.txt', sep=' ', index_col='id')
+        super().__init__(threshold, min_intensity, max_intensity, sofia_parameters, segmentmap, df_true, name)
+        self.test_set_path = test_set_path
+        self.header = header
+        self.cube_shape = np.array(list(map(lambda x: header[x], ['NAXIS1', 'NAXIS2', 'NAXIS3'])))
+        self.cnn_padding = cnn_padding
+        self.sofia_padding = sofia_padding
+
+    def create_catalogue(self, return_mask=True) -> Tuple[pd.DataFrame, Optional[List]]:
+        n_model_outs = len(glob.glob(f'{self.test_set_path}/model_out/*.fits'))
+        catalogues = []
+        intersections = []
+        for i in tqdm(range(n_model_outs)):
+            input_cube = torch.tensor(
+                fits.getdata(f'{self.test_set_path}/clipped_input/{i}.fits').astype(np.float32),
+                dtype=torch.float32)
+            model_out = torch.tensor(fits.getdata(f'{self.test_set_path}/model_out/{i}.fits').astype(np.float32),
+                                     dtype=torch.float32)
+            position = torch.load(f'{self.test_set_path}/partition_position/{i}.pb')
+            slices = pickle.load(open(f'{self.test_set_path}/slices/{i}.pb', 'rb'))
+
+            df, mask = self.generate_single_cube_catalogue(input_cube, self.header, model_out,
+                                                                    self.sofia_parameters,
+                                                                    self.threshold, self.min_intensity,
+                                                                    self.max_intensity,
+                                                                    position)
+
+            df = remove_non_edge_padding(slices, self.cube_shape, self.cnn_padding, self.sofia_padding, df)
+            intersections.extend(self.compute_intersection(df, mask.T))
+
+            catalogues.append(df)
+            del input_cube, model_out
+
+        catalogues = [c for c in catalogues if len(c) > 0]
+        if len(catalogues) > 0:
+            merged_catalogue = pd.concat(catalogues)
+
+            wcs = WCS(self.header)
+            merged_catalogue[['x_geo', 'y_geo', 'z_geo']] = wcs.all_world2pix(
+                merged_catalogue[['ra', 'dec', 'central_freq']], 0)
+
+            return merged_catalogue, intersections
+        return pd.DataFrame(), None
+
+
+class SKAScoreTuner(MultiInputTuner):
+    def __init__(self, threshold: float, min_intensity: float, max_intensity: float, sofia_parameters: dict,
+                 test_set_path: str, header: Header, cnn_padding: np.ndarray, sofia_padding: np.ndarray, name=None):
+        super().__init__(threshold, min_intensity, max_intensity, sofia_parameters, test_set_path, header,
+                         cnn_padding,
+                         sofia_padding, name)
+
+    def score_strategy(self, score_metrics):
+        return score_metrics['sdc2_score']
+
+
+class PrecisionRecallTradeoffTuner(MultiInputTuner):
+    def __init__(self, alpha, threshold: float, min_intensity: float, max_intensity: float, sofia_parameters: dict,
+                 test_set_path: str, header: Header, cnn_padding: np.ndarray, sofia_padding: np.ndarray, name=None):
+        super().__init__(threshold, min_intensity, max_intensity, sofia_parameters, test_set_path, header,
+                         cnn_padding,
+                         sofia_padding, name)
+        self.alpha = alpha
+
+    def score_strategy(self, score_metrics):
+        p = scale_value(score_metrics['precision'])
+        r = scale_value(score_metrics['recall'])
+        return self.alpha * p + (1 - self.alpha) * r

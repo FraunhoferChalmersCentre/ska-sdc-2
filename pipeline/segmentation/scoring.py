@@ -2,6 +2,7 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import sparse
 
 from definitions import config, ROOT_DIR
 from pipeline.common.filename import DirectoryFileName
@@ -34,16 +35,15 @@ def score_source(true_df: pd.DataFrame, matched_prediction_df: pd.DataFrame):
     return len(matched_prediction_df), scores, predictions
 
 
-def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: np.ndarray, save_df: bool = True,
-             sub_directory=None):
+def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, intersections: np.ndarray):
     total_points = 0
-
-    n_matched = 0
 
     total_penalty = 0
 
     df_predicted['points'] = 0
     df_predicted['penalty'] = 0
+    df_predicted['match'] = 0
+    df_predicted['iou'] = 0
 
     metrics = {}
 
@@ -53,34 +53,41 @@ def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: np.n
         df_predicted[f'{attr}_target'] = 0
 
     if len(df_predicted) > 0:
+
         for i, row in df_predicted.iterrows():
             for attr in LINEAR_SCATTER_ATTRS + ANGLE_SCATTER_ATTRS:
                 df_predicted.loc[i, f'{attr}_prediction'] = row[attr]
-            try:
-                match = segmentmap[int(row.z_geo), int(row.y_geo), int(row.x_geo)]
-            except IndexError:
-                print('Index error')
-                continue
-            print(match)
+            match = 0
+            max_iou = 0
+            for k, v in intersections[i].items():
+                iou = v / (df_true.loc[k - 1, 'n_allocations'] + row.mask_size - v)
+                if max_iou < iou:
+                    max_iou = iou
+                    match = k
+            df_predicted.loc[i, 'iou'] = max_iou
+            print(match, max_iou)
+            if 0 < match:
+                print(df_true.loc[match - 1, 'n_allocations'], row.mask_size, intersections[i][match])
+            print('-------')
+
             if match == 0:
                 total_penalty += config['scoring']['fp_penalty']
                 df_predicted.loc[i, 'penalty'] = config['scoring']['fp_penalty']
-                continue
+            elif match > 0:
+                matched, scores, predictions = score_source(df_true.loc[int(match) - 1], df_predicted.loc[[i]])
 
-            n_matched += 1
+                for attr in LINEAR_SCATTER_ATTRS + ANGLE_SCATTER_ATTRS:
+                    df_predicted.loc[i, f'{attr}_score'] = scores[attr]
+                    df_predicted.loc[i, f'{attr}_target'] = predictions[attr][1]
 
-            matched, scores, predictions = score_source(df_true.loc[int(match)], df_predicted.loc[[i]])
+                points = np.mean(list(scores.values()))
+                df_predicted.loc[i, 'total_points'] = points
+                df_predicted.loc[i, 'match'] = int(match) - 1
+                total_points += points
 
-            for attr in LINEAR_SCATTER_ATTRS + ANGLE_SCATTER_ATTRS:
-                df_predicted.loc[i, f'{attr}_score'] = scores[attr]
-                df_predicted.loc[i, f'{attr}_target'] = predictions[attr][1]
-
-            points = np.mean(list(scores.values()))
-            df_predicted.loc[i, 'total_points'] = points
-            total_points += points
-
-        metrics['precision'] = n_matched / len(df_predicted)
-        metrics['recall'] = n_matched / len(df_true)
+        metrics['precision'] = np.sum(config['scoring']['detection_threshold'] <= df_predicted.iou) / len(df_predicted)
+        metrics['recall'] = len(
+            np.unique(df_predicted[config['scoring']['detection_threshold'] <= df_predicted.iou].match)) / len(df_true)
         if metrics['precision'] + metrics['recall'] > 0:
             metrics['f1'] = 2 * (metrics['precision'] * metrics['recall']) / (metrics['precision'] + metrics['recall'])
         else:
@@ -88,23 +95,12 @@ def score_df(df_predicted: pd.DataFrame, df_true: pd.DataFrame, segmentmap: np.n
 
         for attr in LINEAR_SCATTER_ATTRS + ANGLE_SCATTER_ATTRS:
             attrs_scores = df_predicted.loc[df_predicted[f'{attr}_score'] > 0, f'{attr}_score']
-            metrics[f'score/{attr}'] = attrs_scores.mean()
+            metrics[f'sdc2_score/{attr}'] = attrs_scores.mean()
 
         metrics['detected'] = len(df_predicted)
-        metrics['matched'] = n_matched
-        metrics['penalty'] = total_penalty
-        metrics['points'] = total_points
-        metrics['score'] = total_points - total_penalty
+        metrics['matched'] = np.sum(config['scoring']['detection_threshold'] <= df_predicted.iou)
+        metrics['sdc2_penalty'] = total_penalty
+        metrics['sdc2_points'] = total_points
+        metrics['sdc2_score'] = total_points - total_penalty
 
-        if save_df:
-
-            timestamp = datetime.now().strftime("%m%d%Y_%H%M%S")
-            formatted_score = '{:.2f}'.format(metrics['score'])
-            if sub_directory:
-                save_dir = DirectoryFileName(f'{ROOT_DIR}/predicted_dfs/{sub_directory}')
-                df_predicted.to_csv(f'{save_dir.directory}/score_{formatted_score}_{timestamp}.txt', sep=' ', index_label='id')
-            else:
-                save_dir = DirectoryFileName(f'{ROOT_DIR}/predicted_dfs')
-                df_predicted.to_csv(f'{save_dir.directory}/score_{formatted_score}_{timestamp}.txt', sep=' ', index_label='id')
-
-    return metrics
+    return metrics, df_predicted

@@ -1,62 +1,80 @@
+import pickle
+from datetime import datetime
+
 import numpy as np
-from astropy.io.fits import getheader, getdata
-from astropy.wcs import WCS
-from hyperopt import hp, fmin, tpe
-import pandas as pd
+from astropy.io.fits import getheader
+from hyperopt import hp, fmin, tpe, Trials, STATUS_OK
+from hyperopt.fmin import generate_trials_to_calculate
 from sofia import readoptions
-from sparse import COO
 
 from definitions import config, ROOT_DIR
 from pipeline.common import filename
-from pipeline.hyperparameter.tuning import Tuner
+from pipeline.hyperparameter.tuning import PrecisionRecallTradeoffTuner
 
-size = config['segmentation']['size']
-reduction = config['segmentation']['validation']['reduction']
 checkpoint = config['traversing']['checkpoint']
 
-validation_set = filename.processed.validation_dataset(size, 100 * reduction)
-hyperparam_set = filename.processed.hyperopt_dataset(size, 100 * reduction, checkpoint)
-name = f'{checkpoint}/{size}/{reduction}/'
-
-header = getheader(hyperparam_set + '/clipped_input.fits', ignore_blank=True)
-input_cube = getdata(hyperparam_set + '/clipped_input.fits', ignore_blank=True).astype(np.float32)
-model_out = getdata(hyperparam_set + '/output.fits', ignore_blank=True).astype(np.float32)
-segmap = COO.from_numpy(np.load(validation_set + '/segmentmap.npz')['arr_0'].astype(np.float32))
-df = pd.read_csv(validation_set + '/df.txt', sep=' ', index_col='id')
+test_set_path = filename.processed.test_dataset(checkpoint)
 
 sofia_params = readoptions.readPipelineOptions(ROOT_DIR + config['downstream']['sofia']['param_file'])
-
-tuner = Tuner(config['hyperparameters']['threshold'], sofia_params, input_cube, header, model_out, segmap, df,
-              name=name)
 
 space = {'radius_spatial': hp.uniform('radius_spatial', .5, 5),
          'radius_freq': hp.uniform('radius_freq', .5, 100),
          'min_size_spatial': hp.uniform('min_size_spatial', .5, 5),
-         'min_size_freq': hp.uniform('min_size_freq', 10, 50),
+         'min_size_freq': hp.uniform('min_size_freq', 1, 50),
          'max_size_spatial': hp.uniform('max_size_spatial', 5, 30),
-         'max_size_freq': hp.uniform('max_size_freq', 50, 300),
+         'max_size_freq': hp.uniform('max_size_freq', 50, 400),
          'min_voxels': hp.uniform('min_voxels', 1, 300),
          'dilation_max_spatial': hp.uniform('dilation_max_spatial', .5, 5),
          'dilation_max_freq': hp.uniform('dilation_max_freq', .5, 20),
-         'mask_threshold': hp.uniform('mask_threshold', 1e-2, 1),
-         'min_intensity': hp.uniform('min_intensity', 0, 30),
-         'max_intensity': hp.uniform('max_intensity', 200, 1000)
+         'mask_threshold': hp.uniform('mask_threshold', 0, 1),
+         'min_intensity': hp.uniform('min_intensity', 0, 50),
+         'max_intensity': hp.uniform('max_intensity', 10000, 10001)
          }
 
-init_values = [{'radius_spatial': sofia_params['merge']['radiusX'],
-                'radius_freq': sofia_params['merge']['radiusZ'],
-                'min_size_spatial': sofia_params['merge']['minSizeX'],
-                'min_size_freq': sofia_params['merge']['minSizeZ'],
-                'max_size_spatial': sofia_params['merge']['maxSizeX'],
-                'max_size_freq': sofia_params['merge']['maxSizeZ'],
-                'min_voxels': sofia_params['merge']['minVoxels'],
+init_values = [{'radius_spatial': 1,
+                'radius_freq': 1,
+                'min_size_spatial': 1,
+                'min_size_freq': 1,
+                'max_size_spatial': 30,
+                'max_size_freq': 400,
+                'min_voxels': 1,
                 'dilation_max_spatial': sofia_params['parameters']['dilatePixMax'],
                 'dilation_max_freq': sofia_params['parameters']['dilateChanMax'],
-                'mask_threshold': config['hyperparameters']['threshold'],
-                'min_intensity': config['hyperparameters']['min_intensity'],
-                'max_intensity': config['hyperparameters']['max_intensity']
+                'mask_threshold': 1e-2,
+                'min_intensity': 0,
+                'max_intensity': 100000
                 }]
 
-best = fmin(tuner.tuning_objective, space, algo=tpe.suggest, max_evals=10000, points_to_evaluate=init_values)
+trials = Trials()#generate_trials_to_calculate(init_values)
+header = getheader(filename.data.test_sky())
 
-print(best)
+timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+trials_log_file = ROOT_DIR + f'/hparam_logs/{timestamp}.pb'
+CNN_PADDING = np.array([16, 16, 16])
+SOFIA_PADDING = np.array([12, 12, 100])
+
+n_trials = 100000
+performed = 0
+
+
+def early_stopping(result):
+    return result.results[-1]['status'] == STATUS_OK, {}
+
+
+for i in range(n_trials):
+
+    alpha = np.random.random()
+    print(i, 'ALPHA', alpha)
+    name = f'{checkpoint}/{alpha:.2f}'
+
+    if len(trials.results) > 0:
+        for r in trials.results:
+            if r['status'] == STATUS_OK and 'precision' in r.keys() and 'recall' in r.keys():
+                r['loss'] = - (alpha * r['precision'] + (1 - alpha) * r['recall'])
+
+    tuner = PrecisionRecallTradeoffTuner(alpha, config['hyperparameters']['threshold'], init_values[0]['min_intensity'],
+                                         init_values[0]['max_intensity'], sofia_params, test_set_path, header,
+                                         CNN_PADDING, SOFIA_PADDING, name=name)
+
+    best = fmin(tuner.produce_score, space, algo=tpe.suggest, max_evals=100 + len(trials.results),
+                trials=trials, trials_save_file=trials_log_file, early_stop_fn=early_stopping)

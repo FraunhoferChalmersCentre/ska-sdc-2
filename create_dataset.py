@@ -11,8 +11,9 @@ import pandas as pd
 from pipeline.common import filename
 from pipeline.data.segmentmap import create_from_files
 
-segmentmap, allocation_dict = create_from_files(size, regenerate=True)
-df = pd.read_csv(filename.data.true(size), sep=' ')
+segmentmap, allocation_dict = create_from_files(size, padding=config['segmentation']['target']['padding'],
+                                                regenerate=True)
+df = pd.read_csv(filename.data.true(size), sep=' ', index_col='id')
 fname = filename.data.sky(size)
 
 # %%
